@@ -90,7 +90,97 @@ export const SNAKE_STAGES: SnakeStage[] = [
 
 // Gameplay tuning
 export const MAX_SHIELDS = 3
-export const MAX_SNAKES = 6
+export const MAX_SNAKES = 10
 export const SNAKE_EVOLVE_MS = 14000 // each snake evolves a stage every this long it survives
 export const SEED_DMG = 4
 export const FIRE_DMG = 11
+
+// Fraction of the player's dash effect a snake gets when it eats a speed food
+export const SNAKE_FOOD_DASH_FRACTION = 0.03
+
+// Fusion biomes: each fusion shifts the whole look AND the dynamics of the game
+export interface Biome {
+  id: string
+  name: string
+  tagline: string
+  bgTop: string
+  bgBottom: string
+  grass: string
+  accent: string
+  playerSpeedMul: number
+  snakeSpeedMul: number
+  friction: number // player damping per frame (lower = more slippery)
+  foodTarget: number // how many foods on the field
+}
+
+export const BIOMES: Biome[] = [
+  {
+    id: "grove",
+    name: "Verdant Grove",
+    tagline: "Balanced woodland",
+    bgTop: "#4a7d40",
+    bgBottom: "#33602e",
+    grass: "rgba(255,255,255,0.05)",
+    accent: "#7fe07f",
+    playerSpeedMul: 1,
+    snakeSpeedMul: 1,
+    friction: 0.86,
+    foodTarget: 5,
+  },
+  {
+    id: "ember",
+    name: "Ember Wastes",
+    tagline: "Snakes turn aggressive & fast",
+    bgTop: "#7a2f1c",
+    bgBottom: "#3d1410",
+    grass: "rgba(255,180,80,0.07)",
+    accent: "#ff7a1a",
+    playerSpeedMul: 1.05,
+    snakeSpeedMul: 1.35,
+    friction: 0.86,
+    foodTarget: 4,
+  },
+  {
+    id: "frost",
+    name: "Frost Hollow",
+    tagline: "Slippery ice, everything slides",
+    bgTop: "#3a6f8a",
+    bgBottom: "#1f3d52",
+    grass: "rgba(200,240,255,0.09)",
+    accent: "#7fd6ff",
+    playerSpeedMul: 1.1,
+    snakeSpeedMul: 0.85,
+    friction: 0.95,
+    foodTarget: 5,
+  },
+  {
+    id: "bloom",
+    name: "Twilight Bloom",
+    tagline: "Food blooms everywhere",
+    bgTop: "#43275f",
+    bgBottom: "#241038",
+    grass: "rgba(255,200,255,0.07)",
+    accent: "#d98fff",
+    playerSpeedMul: 1,
+    snakeSpeedMul: 1.1,
+    friction: 0.86,
+    foodTarget: 9,
+  },
+]
+
+// Short, random timed events layered on top of the current biome
+export interface GameEvent {
+  id: string
+  name: string
+  desc: string
+  color: string
+  duration: number
+}
+
+export const EVENTS: GameEvent[] = [
+  { id: "feast", name: "Acorn Feast", desc: "Food rains down!", color: "#ffd966", duration: 8000 },
+  { id: "frenzy", name: "Snake Frenzy", desc: "Snakes go wild!", color: "#ff5a4a", duration: 7000 },
+  { id: "swift", name: "Swift Paws", desc: "You move faster!", color: "#7fd6ff", duration: 8000 },
+  { id: "lull", name: "Sleepy Snakes", desc: "Snakes slow down.", color: "#a0e0a0", duration: 7000 },
+  { id: "split", name: "Hydra Hour", desc: "Slain snakes split into 3!", color: "#ff9a4a", duration: 9000 },
+]

@@ -10,8 +10,13 @@ import {
   SNAKE_EVOLVE_MS,
   SEED_DMG,
   FIRE_DMG,
+  BIOMES,
+  EVENTS,
+  SNAKE_FOOD_DASH_FRACTION,
   type FoodType,
   type PowerId,
+  type Biome,
+  type GameEvent,
 } from "@/lib/game-config"
 
 const WORLD = { w: 900, h: 600 }
@@ -49,6 +54,7 @@ interface Snake {
   heading: number
   reTargetAt: number
   aim: Vec
+  boost: number // transient speed multiplier bonus from eating food
 }
 
 interface GameState {
@@ -63,6 +69,12 @@ interface GameState {
   particles: { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number }[]
   floaters: { x: number; y: number; vy: number; life: number; text: string; color: string }[]
   shake: number
+  biomeIndex: number
+  nextFusionScore: number
+  fusionFlash: number
+  event: GameEvent | null
+  eventUntil: number
+  nextEventAt: number
 }
 
 type Status = "menu" | "playing" | "dead"
@@ -94,6 +106,7 @@ function makeSnake(stage: number, x: number, y: number, now: number): Snake {
     heading: rand(0, Math.PI * 2),
     reTargetAt: 0,
     aim: { x, y },
+    boost: 0,
     segs: Array.from({ length: st.segments }, (_, i) => ({ x, y: y + i * 4 })),
   }
 }
@@ -116,6 +129,10 @@ export default function SquirrelGame() {
     shields: 0,
     topStage: 0,
     snakeCount: 1,
+    biomeIndex: 0,
+    eventName: "",
+    eventColor: "",
+    eventLeft: 0,
   })
 
   const createState = useCallback((): GameState => {
@@ -132,6 +149,12 @@ export default function SquirrelGame() {
       particles: [],
       floaters: [],
       shake: 0,
+      biomeIndex: 0,
+      nextFusionScore: 200,
+      fusionFlash: 0,
+      event: null,
+      eventUntil: 0,
+      nextEventAt: now + rand(7000, 12000),
     }
   }, [])
 
@@ -282,6 +305,35 @@ export default function SquirrelGame() {
 
       const p = s.player
       const k = keysRef.current
+
+      const biome = BIOMES[s.biomeIndex]
+
+      // --- fusion: every milestone score, the world fuses into a new biome ---
+      if (s.score >= s.nextFusionScore) {
+        s.biomeIndex = (s.biomeIndex + 1) % BIOMES.length
+        s.nextFusionScore += 250
+        s.fusionFlash = 1
+        const nb = BIOMES[s.biomeIndex]
+        burst(s, p.x, p.y, nb.accent, 40, 7, 5)
+        floater(s, p.x, p.y - 30, `FUSION: ${nb.name}`, nb.accent)
+        s.shake = Math.min(12, s.shake + 8)
+      }
+      s.fusionFlash *= 0.93
+
+      // --- random timed events ---
+      if (s.event && now > s.eventUntil) {
+        s.event = null
+        s.nextEventAt = now + rand(8000, 14000)
+      }
+      if (!s.event && now > s.nextEventAt) {
+        const ev = EVENTS[Math.floor(Math.random() * EVENTS.length)]
+        s.event = ev
+        s.eventUntil = now + ev.duration
+        floater(s, p.x, p.y - 30, `${ev.name}!`, ev.color)
+        burst(s, p.x, p.y, ev.color, 28, 6, 4)
+      }
+      const ev = s.event
+
       let ax = 0
       let ay = 0
       if (k["arrowup"] || k["w"]) ay -= 1
@@ -289,7 +341,8 @@ export default function SquirrelGame() {
       if (k["arrowleft"] || k["a"]) ax -= 1
       if (k["arrowright"] || k["d"]) ax += 1
 
-      const speedBoost = s.power.id === "speed" ? 1.9 : 1
+      const eventSpeed = ev?.id === "swift" ? 1.4 : 1
+      const speedBoost = (s.power.id === "speed" ? 1.9 : 1) * biome.playerSpeedMul * eventSpeed
       const accel = 0.9 * speedBoost
 
       if (ax || ay) {
@@ -315,8 +368,8 @@ export default function SquirrelGame() {
       }
 
       const maxSpd = 4.5 * speedBoost
-      p.vx *= 0.86
-      p.vy *= 0.86
+      p.vx *= biome.friction
+      p.vy *= biome.friction
       const psp = Math.hypot(p.vx, p.vy)
       if (psp > maxSpd) {
         p.vx = (p.vx / psp) * maxSpd
@@ -365,7 +418,8 @@ export default function SquirrelGame() {
           s.foods.splice(i, 1)
         }
       }
-      while (s.foods.length < 5) s.foods.push(spawnFood())
+      const foodTarget = biome.foodTarget + (ev?.id === "feast" ? 6 : 0)
+      while (s.foods.length < foodTarget) s.foods.push(spawnFood())
 
       // projectiles move
       for (let i = s.projectiles.length - 1; i >= 0; i--) {
@@ -417,7 +471,23 @@ export default function SquirrelGame() {
         // strategy: pick an aim point, re-evaluated periodically
         if (now > snake.reTargetAt) {
           snake.reTargetAt = now + rand(600, 1400)
-          if (snake.strategy === "flanker") {
+          // occasionally a snake decides to grab nearby food instead of chasing
+          let foodGoal: Vec | null = null
+          if (Math.random() < 0.35 && s.foods.length > 0) {
+            let best: FoodItem | null = null
+            let bd = Infinity
+            for (const f of s.foods) {
+              const d = Math.hypot(f.x - head.x, f.y - head.y)
+              if (d < 240 && d < bd) {
+                bd = d
+                best = f
+              }
+            }
+            if (best) foodGoal = { x: best.x, y: best.y }
+          }
+          if (foodGoal) {
+            snake.aim = foodGoal
+          } else if (snake.strategy === "flanker") {
             // aim ahead of the player's velocity
             snake.aim = { x: p.x + p.vx * 26, y: p.y + p.vy * 26 }
           } else if (snake.strategy === "ambusher") {
@@ -444,10 +514,28 @@ export default function SquirrelGame() {
         snake.wiggle += 0.22 * dt
         const wiggleAmt = Math.sin(snake.wiggle) * 0.5
         const moveAng = snake.heading + wiggleAmt
-        head.x += Math.cos(moveAng) * st.speed * dt
-        head.y += Math.sin(moveAng) * st.speed * dt
+        // biome + event speed modifiers, plus transient food boost (decays)
+        snake.boost *= 0.985
+        const eventSnakeMul = ev?.id === "frenzy" ? 1.5 : ev?.id === "lull" ? 0.55 : 1
+        const snakeSpeed = st.speed * biome.snakeSpeedMul * eventSnakeMul * (1 + snake.boost)
+        head.x += Math.cos(moveAng) * snakeSpeed * dt
+        head.y += Math.sin(moveAng) * snakeSpeed * dt
         head.x = Math.max(6, Math.min(WORLD.w - 6, head.x))
         head.y = Math.max(6, Math.min(WORLD.h - 6, head.y))
+
+        // snake eats nearby food: tiny 3% dash effect + small heal
+        for (let i = s.foods.length - 1; i >= 0; i--) {
+          const f = s.foods[i]
+          if (Math.hypot(f.x - head.x, f.y - head.y) < st.segSize + 12) {
+            if (f.type.power === "speed") {
+              snake.boost += (1.9 - 1) * SNAKE_FOOD_DASH_FRACTION // 3% of the player's dash bonus
+              floater(s, head.x, head.y - 12, "dash", "#7fd6ff")
+            }
+            snake.hp = Math.min(snake.maxHp, snake.hp + 4)
+            burst(s, f.x, f.y, f.type.color, 8, 3, 2)
+            s.foods.splice(i, 1)
+          }
+        }
 
         const follow = st.segSize * 0.78
         for (let i = 1; i < segs.length; i++) {
@@ -511,7 +599,8 @@ export default function SquirrelGame() {
           floater(s, head.x, head.y, "+40", "#ffd966")
           const childStage = Math.max(0, snake.stage - 1)
           const room = MAX_SNAKES - (s.snakes.length + newSnakes.length)
-          const spawnCount = Math.min(2, room)
+          const wantSplit = ev?.id === "split" ? 3 : 2
+          const spawnCount = Math.min(wantSplit, room)
           for (let c = 0; c < spawnCount; c++) {
             const ox = head.x + rand(-40, 40)
             const oy = head.y + rand(-40, 40)
@@ -570,6 +659,10 @@ export default function SquirrelGame() {
         shields: s.shields,
         topStage,
         snakeCount: s.snakes.length,
+        biomeIndex: s.biomeIndex,
+        eventName: s.event?.name ?? "",
+        eventColor: s.event?.color ?? "",
+        eventLeft: s.event ? Math.max(0, Math.ceil((s.eventUntil - now) / 1000)) : 0,
       })
 
       rafRef.current = requestAnimationFrame(loop)
@@ -585,15 +678,16 @@ export default function SquirrelGame() {
       ctx.translate(rand(-s.shake, s.shake), rand(-s.shake, s.shake))
     }
 
-    // background: layered grass with vignette
+    // background: biome-tinted gradient
+    const biome = BIOMES[s.biomeIndex]
     const bg = ctx.createLinearGradient(0, 0, 0, WORLD.h)
-    bg.addColorStop(0, "#4a7d40")
-    bg.addColorStop(1, "#33602e")
+    bg.addColorStop(0, biome.bgTop)
+    bg.addColorStop(1, biome.bgBottom)
     ctx.fillStyle = bg
     ctx.fillRect(-10, -10, WORLD.w + 20, WORLD.h + 20)
 
-    // grass tufts
-    ctx.strokeStyle = "rgba(255,255,255,0.05)"
+    // grass / ground tufts in biome accent
+    ctx.strokeStyle = biome.grass
     ctx.lineWidth = 1.5
     for (let gx = 8; gx < WORLD.w; gx += 34) {
       for (let gy = 14; gy < WORLD.h; gy += 34) {
@@ -859,6 +953,14 @@ export default function SquirrelGame() {
     }
     ctx.globalAlpha = 1
 
+    // fusion transition flash
+    if (s.fusionFlash > 0.02) {
+      ctx.globalAlpha = s.fusionFlash * 0.6
+      ctx.fillStyle = biome.accent
+      ctx.fillRect(-10, -10, WORLD.w + 20, WORLD.h + 20)
+      ctx.globalAlpha = 1
+    }
+
     ctx.restore()
   }
 
@@ -910,6 +1012,24 @@ export default function SquirrelGame() {
               </div>
             </div>
 
+            {/* Center: biome + active event */}
+            <div className="flex flex-col items-center gap-1.5">
+              <div
+                className="rounded-full px-3 py-1 text-center text-xs font-bold text-white backdrop-blur-sm"
+                style={{ background: "rgba(0,0,0,0.45)", boxShadow: `0 0 0 1.5px ${BIOMES[hud.biomeIndex].accent}` }}
+              >
+                <span style={{ color: BIOMES[hud.biomeIndex].accent }}>{BIOMES[hud.biomeIndex].name}</span>
+              </div>
+              {hud.eventName && (
+                <div
+                  className="animate-pulse rounded-full px-3 py-1 text-center text-xs font-bold backdrop-blur-sm"
+                  style={{ background: "rgba(0,0,0,0.55)", color: hud.eventColor, boxShadow: `0 0 0 1.5px ${hud.eventColor}` }}
+                >
+                  {hud.eventName} {hud.eventLeft > 0 && <span className="font-mono opacity-80">{hud.eventLeft}s</span>}
+                </div>
+              )}
+            </div>
+
             <div className="flex flex-col items-end gap-2">
               <div className="rounded-lg bg-black/45 px-3 py-2 text-right text-xs text-white backdrop-blur-sm">
                 <div className="font-bold uppercase tracking-wide text-[#ff9a6b]">{SNAKE_STAGES[hud.topStage].name}</div>
@@ -940,8 +1060,9 @@ export default function SquirrelGame() {
               Squirrel Fusion
             </h1>
             <p className="max-w-md text-pretty text-sm text-white/80 md:text-base">
-              Eat foods to fuse powers. Spit seeds, breathe fire, dash, or stack shields — and survive snakes that
-              evolve, serpentine, and split in two when slain.
+              Eat foods to fuse powers and survive snakes that evolve, serpentine, and split. As your score climbs the
+              world <span className="font-bold text-white">fuses</span> into new biomes that reshape the rules — plus
+              random events shake things up. Watch out: snakes eat food too.
             </p>
             <button
               onClick={start}
