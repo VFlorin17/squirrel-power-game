@@ -168,7 +168,24 @@ export default function SquirrelGame() {
     const now = performance.now()
     if (now - lastShotRef.current < 320) return
     const p = s.player
-    const f = p.facing
+    // auto-aim at the nearest snake head; fall back to facing direction
+    let f = p.facing
+    let nearest: Snake | null = null
+    let nd = Infinity
+    for (const sn of s.snakes) {
+      const h = sn.segs[0]
+      const d = Math.hypot(h.x - p.x, h.y - p.y)
+      if (d < nd) {
+        nd = d
+        nearest = sn
+      }
+    }
+    if (nearest) {
+      const h = nearest.segs[0]
+      const a = Math.atan2(h.y - p.y, h.x - p.x)
+      f = { x: Math.cos(a), y: Math.sin(a) }
+      p.facing = f
+    }
     if (s.power.id === "seeds") {
       lastShotRef.current = now
       for (let i = 0; i < 10; i++) {
@@ -312,6 +329,11 @@ export default function SquirrelGame() {
       // power expiry (shield is count-based, never expires by time)
       if (s.power.id !== "none" && s.power.id !== "shield" && now > s.power.until) {
         s.power = { id: "none", until: 0, name: "" }
+      }
+
+      // auto-fire whenever an offensive power is active and a snake is around
+      if ((s.power.id === "seeds" || s.power.id === "fire") && s.snakes.length > 0) {
+        shoot()
       }
 
       // eat food
@@ -903,7 +925,7 @@ export default function SquirrelGame() {
                   <span style={{ color: powerColor[hud.power] }}>{hud.powerName}</span>
                   {hud.powerLeft > 0 && <span className="ml-1 font-mono opacity-80">{hud.powerLeft}s</span>}
                   {(hud.power === "seeds" || hud.power === "fire") && (
-                    <div className="mt-0.5 font-normal opacity-80">SPACE to fire</div>
+                    <div className="mt-0.5 font-normal opacity-80">Auto-firing</div>
                   )}
                 </div>
               )}
@@ -927,7 +949,7 @@ export default function SquirrelGame() {
             >
               Start Game
             </button>
-            <p className="text-xs text-white/60">Move: Click / WASD · Fire: SPACE</p>
+            <p className="text-xs text-white/60">Move: Click / WASD · Powers fire automatically</p>
           </div>
         )}
 
