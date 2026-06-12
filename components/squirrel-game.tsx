@@ -1,6 +1,5 @@
 "use client"
 
-import type React from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ENEMY_ARCHETYPES,
@@ -2342,23 +2341,23 @@ export default function SquirrelGame() {
                     <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/55">Weapon Route</div>
                     <div className="rounded-full bg-white/8 px-2 py-1 text-[10px] uppercase tracking-wide text-[#eccd8d]">Guard passive</div>
                   </div>
-                  <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2">
-                    {hud.compass.branches.map((branch, index) => (
-                      <React.Fragment key={`${branch.label}-${index}`}>
-                        {index > 0 && <div className="text-center text-xs text-white/35">{index === 1 ? "^" : "->"}</div>}
-                        <div className="flex min-w-0 flex-col items-center text-center">
-                          <div
-                            className="flex h-9 w-9 items-center justify-center rounded-2xl border text-sm font-black"
-                            style={{ borderColor: `${branch.color}aa`, background: `${branch.color}22`, color: branch.color }}
-                          >
-                            {branch.icon}
+                    <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2">
+                      {hud.compass.branches.map((branch, index) => (
+                        <div key={`${branch.label}-${index}`} className="contents">
+                          {index > 0 && <div className="text-center text-xs text-white/35">{index === 1 ? "^" : "->"}</div>}
+                          <div className="flex min-w-0 flex-col items-center text-center">
+                            <div
+                              className="flex h-9 w-9 items-center justify-center rounded-2xl border text-sm font-black"
+                              style={{ borderColor: `${branch.color}aa`, background: `${branch.color}22`, color: branch.color }}
+                            >
+                              {branch.icon}
+                            </div>
+                            <div className="mt-1 text-[11px] font-bold text-white">{branch.label}</div>
+                            <div className="text-[10px] leading-tight text-white/55">{branch.outcome}</div>
                           </div>
-                          <div className="mt-1 text-[11px] font-bold text-white">{branch.label}</div>
-                          <div className="text-[10px] leading-tight text-white/55">{branch.outcome}</div>
                         </div>
-                      </React.Fragment>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
                   <div className="mt-2 flex items-center justify-center gap-2 rounded-2xl bg-white/6 px-3 py-2">
                     <div
                       className="flex h-9 w-9 items-center justify-center rounded-2xl text-sm font-black"
