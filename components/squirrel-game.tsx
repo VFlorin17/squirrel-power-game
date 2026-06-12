@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import {
   FOODS,
   SNAKE_STAGES,
+  LEVELS,
   MAX_SHIELDS,
   MAX_SNAKES,
   SNAKE_EVOLVE_MS,
@@ -17,6 +18,7 @@ import {
   type PowerId,
   type Biome,
   type GameEvent,
+  type LevelConfig,
 } from "@/lib/game-config"
 
 const WORLD = { w: 900, h: 600 }
@@ -55,6 +57,8 @@ interface Snake {
   reTargetAt: number
   aim: Vec
   boost: number // transient speed multiplier bonus from eating food
+  isBoss?: boolean
+  bossName?: string
 }
 
 interface GameState {
@@ -75,9 +79,11 @@ interface GameState {
   event: GameEvent | null
   eventUntil: number
   nextEventAt: number
+  levelIndex: number
+  bossDefeated: boolean
 }
 
-type Status = "menu" | "playing" | "dead"
+type Status = "menu" | "playing" | "dead" | "won"
 
 let idCounter = 1
 const nextId = () => idCounter++
@@ -111,6 +117,32 @@ function makeSnake(stage: number, x: number, y: number, now: number): Snake {
   }
 }
 
+function levelSnakes(levelIndex: number, now: number): Snake[] {
+  if (levelIndex === 0) {
+    return [makeSnake(0, 90, 90, now), makeSnake(0, WORLD.w - 110, WORLD.h - 110, now)]
+  }
+  if (levelIndex === 1) {
+    return [
+      makeSnake(1, 110, 90, now),
+      makeSnake(1, WORLD.w - 120, 110, now),
+      makeSnake(2, WORLD.w / 2, WORLD.h - 120, now),
+    ]
+  }
+
+  const boss = makeSnake(4, WORLD.w / 2, 130, now)
+  boss.isBoss = true
+  boss.bossName = "Viper King"
+  boss.maxHp = 320
+  boss.hp = 320
+  boss.evolveAt = Number.POSITIVE_INFINITY
+  boss.strategy = "chaser"
+  return [boss]
+}
+
+function getLevel(index: number): LevelConfig {
+  return LEVELS[Math.min(index, LEVELS.length - 1)]
+}
+
 export default function SquirrelGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stateRef = useRef<GameState | null>(null)
@@ -133,6 +165,10 @@ export default function SquirrelGame() {
     eventName: "",
     eventColor: "",
     eventLeft: 0,
+    levelName: LEVELS[0].name,
+    objective: LEVELS[0].objective,
+    bossHp: 0,
+    bossMaxHp: 0,
   })
 
   const createState = useCallback((): GameState => {
@@ -144,7 +180,7 @@ export default function SquirrelGame() {
       target: null,
       foods: Array.from({ length: 5 }, spawnFood),
       projectiles: [],
-      snakes: [makeSnake(0, 70, 70, now)],
+      snakes: levelSnakes(0, now),
       score: 0,
       particles: [],
       floaters: [],
@@ -155,6 +191,8 @@ export default function SquirrelGame() {
       event: null,
       eventUntil: 0,
       nextEventAt: now + rand(7000, 12000),
+      levelIndex: 0,
+      bossDefeated: false,
     }
   }, [])
 
@@ -307,9 +345,27 @@ export default function SquirrelGame() {
       const k = keysRef.current
 
       const biome = BIOMES[s.biomeIndex]
+      const level = getLevel(s.levelIndex)
+
+      if (s.levelIndex < LEVELS.length - 1 && s.score >= level.targetScore) {
+        s.levelIndex += 1
+        const nextLevel = getLevel(s.levelIndex)
+        s.biomeIndex = Math.min(s.levelIndex, BIOMES.length - 1)
+        s.snakes = levelSnakes(s.levelIndex, now)
+        s.projectiles = []
+        s.foods = Array.from({ length: BIOMES[s.biomeIndex].foodTarget }, spawnFood)
+        s.event = null
+        s.eventUntil = 0
+        s.nextEventAt = now + rand(7000, 12000)
+        s.target = null
+        burst(s, p.x, p.y, BIOMES[s.biomeIndex].accent, 48, 7, 5)
+        floater(s, p.x, p.y - 28, nextLevel.name, BIOMES[s.biomeIndex].accent)
+        floater(s, p.x, p.y - 48, nextLevel.objective, "#ffffff")
+        s.shake = Math.min(14, s.shake + 10)
+      }
 
       // --- fusion: every milestone score, the world fuses into a new biome ---
-      if (s.score >= s.nextFusionScore) {
+      if (s.levelIndex < LEVELS.length - 1 && s.score >= s.nextFusionScore) {
         s.biomeIndex = (s.biomeIndex + 1) % BIOMES.length
         s.nextFusionScore += 250
         s.fusionFlash = 1
@@ -453,7 +509,7 @@ export default function SquirrelGame() {
         const head = segs[0]
 
         // time-based evolution
-        if (now > snake.evolveAt && snake.stage < SNAKE_STAGES.length - 1) {
+        if (!snake.isBoss && now > snake.evolveAt && snake.stage < SNAKE_STAGES.length - 1) {
           snake.stage++
           const ns = SNAKE_STAGES[snake.stage]
           const ratio = snake.hp / snake.maxHp
@@ -594,31 +650,58 @@ export default function SquirrelGame() {
         // snake death -> split into two
         if (snake.hp <= 0) {
           s.snakes.splice(si, 1)
-          s.score += 40
+          s.score += snake.isBoss ? 200 : 40
           burst(s, head.x, head.y, st.colorDark, 36, 6, 5)
-          floater(s, head.x, head.y, "+40", "#ffd966")
-          const childStage = Math.max(0, snake.stage - 1)
-          const room = MAX_SNAKES - (s.snakes.length + newSnakes.length)
-          const wantSplit = ev?.id === "split" ? 3 : 2
-          const spawnCount = Math.min(wantSplit, room)
-          for (let c = 0; c < spawnCount; c++) {
-            const ox = head.x + rand(-40, 40)
-            const oy = head.y + rand(-40, 40)
-            newSnakes.push(
-              makeSnake(
-                childStage,
-                Math.max(20, Math.min(WORLD.w - 20, ox)),
-                Math.max(20, Math.min(WORLD.h - 20, oy)),
-                now,
-              ),
-            )
+          floater(s, head.x, head.y, snake.isBoss ? "Boss Down!" : "+40", "#ffd966")
+          if (snake.isBoss) {
+            s.bossDefeated = true
+          } else {
+            const childStage = Math.max(0, snake.stage - 1)
+            const room = MAX_SNAKES - (s.snakes.length + newSnakes.length)
+            const wantSplit = ev?.id === "split" ? 3 : 2
+            const spawnCount = Math.min(wantSplit, room)
+            for (let c = 0; c < spawnCount; c++) {
+              const ox = head.x + rand(-40, 40)
+              const oy = head.y + rand(-40, 40)
+              newSnakes.push(
+                makeSnake(
+                  childStage,
+                  Math.max(20, Math.min(WORLD.w - 20, ox)),
+                  Math.max(20, Math.min(WORLD.h - 20, oy)),
+                  now,
+                ),
+              )
+            }
           }
         }
       }
       if (newSnakes.length) s.snakes.push(...newSnakes)
-      // safety: never let the board be empty
-      if (s.snakes.length === 0) {
+      // safety: keep normal levels populated, but let the boss stage end cleanly
+      if (s.levelIndex < LEVELS.length - 1 && s.snakes.length === 0) {
         s.snakes.push(makeSnake(0, rand(40, WORLD.w - 40), 40, now))
+      }
+      if (s.levelIndex === LEVELS.length - 1 && s.bossDefeated && s.snakes.length === 0) {
+        const currentLevel = getLevel(s.levelIndex)
+        setHud({
+          hp: Math.round(p.hp),
+          score: s.score,
+          power: s.power.id,
+          powerName: s.power.name,
+          powerLeft: s.power.id !== "none" && s.power.id !== "shield" ? Math.max(0, Math.ceil((s.power.until - now) / 1000)) : 0,
+          shields: s.shields,
+          topStage: 4,
+          snakeCount: 0,
+          biomeIndex: s.biomeIndex,
+          eventName: "",
+          eventColor: "",
+          eventLeft: 0,
+          levelName: currentLevel.name,
+          objective: currentLevel.objective,
+          bossHp: 0,
+          bossMaxHp: 0,
+        })
+        setStatus("won")
+        return
       }
 
       // particles
@@ -649,7 +732,9 @@ export default function SquirrelGame() {
 
       draw(ctx, s, now)
 
+      const currentLevel = getLevel(s.levelIndex)
       const topStage = s.snakes.reduce((m, sn) => Math.max(m, sn.stage), 0)
+      const boss = s.snakes.find((sn) => sn.isBoss)
       setHud({
         hp: Math.round(p.hp),
         score: s.score,
@@ -663,6 +748,10 @@ export default function SquirrelGame() {
         eventName: s.event?.name ?? "",
         eventColor: s.event?.color ?? "",
         eventLeft: s.event ? Math.max(0, Math.ceil((s.eventUntil - now) / 1000)) : 0,
+        levelName: currentLevel.name,
+        objective: currentLevel.objective,
+        bossHp: boss ? Math.max(0, Math.round(boss.hp)) : 0,
+        bossMaxHp: boss ? boss.maxHp : 0,
       })
 
       rafRef.current = requestAnimationFrame(loop)
@@ -1018,7 +1107,12 @@ export default function SquirrelGame() {
                 className="rounded-full px-3 py-1 text-center text-xs font-bold text-white backdrop-blur-sm"
                 style={{ background: "rgba(0,0,0,0.45)", boxShadow: `0 0 0 1.5px ${BIOMES[hud.biomeIndex].accent}` }}
               >
-                <span style={{ color: BIOMES[hud.biomeIndex].accent }}>{BIOMES[hud.biomeIndex].name}</span>
+                <span style={{ color: BIOMES[hud.biomeIndex].accent }}>
+                  {hud.levelName} - {BIOMES[hud.biomeIndex].name}
+                </span>
+              </div>
+              <div className="rounded-full bg-black/45 px-3 py-1 text-center text-[11px] font-medium text-white/90 backdrop-blur-sm">
+                {hud.objective}
               </div>
               {hud.eventName && (
                 <div
@@ -1037,6 +1131,20 @@ export default function SquirrelGame() {
                   {hud.snakeCount} snake{hud.snakeCount > 1 ? "s" : ""} · Evo {hud.topStage + 1}/{SNAKE_STAGES.length}
                 </div>
               </div>
+              {hud.bossMaxHp > 0 && (
+                <div className="rounded-lg bg-black/55 px-3 py-2 text-right text-xs font-bold text-white backdrop-blur-sm">
+                  <div className="mb-1 uppercase tracking-wide text-[#ff6b6b]">Boss HP</div>
+                  <div className="h-2.5 w-36 overflow-hidden rounded-full bg-white/20">
+                    <div
+                      className="h-full rounded-full bg-[#e23b3b] transition-[width] duration-150"
+                      style={{ width: `${(hud.bossHp / hud.bossMaxHp) * 100}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 font-mono">
+                    {hud.bossHp}/{hud.bossMaxHp}
+                  </div>
+                </div>
+              )}
               {hud.power !== "none" && (
                 <div
                   className="rounded-lg bg-black/55 px-3 py-2 text-right text-xs font-bold text-white backdrop-blur-sm"
@@ -1083,6 +1191,21 @@ export default function SquirrelGame() {
             </p>
             <p className="text-2xl font-bold text-white">
               Score <span className="text-[#ffd966]">{hud.score}</span>
+            </p>
+            <button
+              onClick={start}
+              className="rounded-full bg-primary px-8 py-3 text-lg font-bold text-primary-foreground shadow-lg transition hover:scale-105 active:scale-95"
+            >
+              Play Again
+            </button>
+          </div>
+        )}
+        {status === "won" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/65 p-6 text-center backdrop-blur-sm">
+            <h2 className="text-4xl font-extrabold text-[#ffd966] drop-shadow">Victory!</h2>
+            <p className="text-white/85">Ai invins Viper King si ai terminat toate cele 3 etape.</p>
+            <p className="text-2xl font-bold text-white">
+              Final Score <span className="text-[#ffd966]">{hud.score}</span>
             </p>
             <button
               onClick={start}

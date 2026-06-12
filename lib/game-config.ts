@@ -184,3 +184,16 @@ export const EVENTS: GameEvent[] = [
   { id: "lull", name: "Sleepy Snakes", desc: "Snakes slow down.", color: "#a0e0a0", duration: 7000 },
   { id: "split", name: "Hydra Hour", desc: "Slain snakes split into 3!", color: "#ff9a4a", duration: 9000 },
 ]
+
+export interface LevelConfig {
+  id: "level-1" | "level-2" | "boss"
+  name: string
+  objective: string
+  targetScore: number
+}
+
+export const LEVELS: LevelConfig[] = [
+  { id: "level-1", name: "Level 1", objective: "Reach 120 score to enter the deeper grove.", targetScore: 120 },
+  { id: "level-2", name: "Level 2", objective: "Reach 320 score to awaken the boss.", targetScore: 320 },
+  { id: "boss", name: "Boss", objective: "Defeat the Viper King to win the game.", targetScore: 320 },
+]
