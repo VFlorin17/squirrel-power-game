@@ -36,6 +36,7 @@ interface InputState {
   down: boolean
   left: boolean
   right: boolean
+  target: Vec | null
 }
 
 interface FoodItem extends Vec {
@@ -86,12 +87,15 @@ interface PlayerState extends Vec {
   alive: boolean
   hitFlash: number
   isHost: boolean
+  target: Vec | null
 }
 
 interface EnemyState extends Vec {
   id: string
   type: EnemyType
   tier: number
+  vx: number
+  vy: number
   hp: number
   maxHp: number
   size: number
@@ -107,6 +111,7 @@ interface EnemyState extends Vec {
   seedLevel: number
   speedLevel: number
   hitFlash: number
+  heading: number
 }
 
 interface SpawnOrder {
@@ -159,7 +164,7 @@ type RoomMessage =
   | { type: "start"; state: GameState }
   | { type: "state"; state: GameState; status: Status }
 
-const emptyInput = (): InputState => ({ up: false, down: false, left: false, right: false })
+const emptyInput = (): InputState => ({ up: false, down: false, left: false, right: false, target: null })
 
 let nextId = 1
 const uid = () => `${Date.now()}-${nextId++}`
@@ -221,7 +226,7 @@ function playerColor(player: PlayerState) {
   if (power === "seeds") return ["#b17a3f", "#c89a41", "#e1c64d"][player.seedStacks - 1] ?? "#e1c64d"
   if (power === "speed") return ["#5f8dff", "#3f7dff", "#6bc9ff"][player.speedStacks - 1] ?? "#6bc9ff"
   if (power === "shield") return ["#b18d56", "#d5b06c", "#f0d58f"][player.shieldStacks - 1] ?? "#f0d58f"
-  return "#b97837"
+  return "#d38a3f"
 }
 
 function spawnFood(): FoodItem {
@@ -250,6 +255,8 @@ function createEnemy(type: EnemyType, tier: number): EnemyState {
     id: uid(),
     type,
     tier: clampedTier,
+    vx: 0,
+    vy: 0,
     hp: base.hp * archetype.hpMul,
     maxHp: base.hp * archetype.hpMul,
     size: base.size + (type === "boss" ? 18 : type === "miniBoss" ? 8 : 0),
@@ -267,6 +274,7 @@ function createEnemy(type: EnemyType, tier: number): EnemyState {
     seedLevel: 0,
     speedLevel: 0,
     hitFlash: 0,
+    heading: rand(0, Math.PI * 2),
   }
 }
 
@@ -306,6 +314,7 @@ function createPlayers(mode: PlayMode, members: RoomMember[]): PlayerState[] {
     hurtCooldown: 0,
     alive: true,
     hitFlash: 0,
+    target: null,
   }))
 }
 
@@ -339,6 +348,8 @@ function buildWave(level: LevelConfig, wave: number): SpawnOrder[] {
     { type: "charger", cost: level.level >= 3 ? 2 : 99 },
     { type: "splitter", cost: level.level >= 4 ? 3 : 99 },
     { type: "orbiter", cost: level.level >= 6 ? 3 : 99 },
+    { type: "raptor", cost: level.level >= 4 ? 2 : 99 },
+    { type: "dingo", cost: level.level >= 5 ? 4 : 99 },
   ].filter((entry) => entry.cost < 90)
 
   const orders: SpawnOrder[] = []
@@ -386,6 +397,17 @@ function addParticles(state: GameState, x: number, y: number, color: string, cou
   }
 }
 
+function dropWaveReward(state: GameState, focus: Vec) {
+  for (let i = 0; i < 3; i++) {
+    state.foods.push({
+      id: nextId++,
+      type: i === 0 ? choose(FOODS.filter((food) => food.power !== "none")) : choose(FOODS),
+      x: clamp(focus.x + rand(-70, 70), 50, WORLD.w - 50),
+      y: clamp(focus.y + rand(-70, 70), 50, WORLD.h - 50),
+    })
+  }
+}
+
 function nearestPlayer(enemy: EnemyState, players: PlayerState[]) {
   let best: PlayerState | null = null
   let bestDist = Number.POSITIVE_INFINITY
@@ -413,6 +435,33 @@ function nearestEnemy(player: PlayerState, enemies: EnemyState[]) {
   return best
 }
 
+function aimInaccuracy(distance: number, targetSpeed: number, base = 0.04) {
+  return base + Math.min(0.34, distance / 1400) + Math.min(0.22, targetSpeed / 18)
+}
+
+function aimWithMiss(
+  from: Vec,
+  target: Vec,
+  targetVelocity: Vec,
+  projectileSpeed: number,
+  distanceBase = 0.04,
+) {
+  const dx = target.x - from.x
+  const dy = target.y - from.y
+  const distance = Math.hypot(dx, dy)
+  const travelTime = distance / Math.max(1, projectileSpeed)
+  const predicted = {
+    x: target.x + targetVelocity.x * travelTime * 1.4,
+    y: target.y + targetVelocity.y * travelTime * 1.4,
+  }
+  const miss = aimInaccuracy(distance, Math.hypot(targetVelocity.x, targetVelocity.y), distanceBase)
+  const offset = {
+    x: rand(-distance * miss, distance * miss),
+    y: rand(-distance * miss, distance * miss),
+  }
+  return norm(predicted.x + offset.x - from.x, predicted.y + offset.y - from.y)
+}
+
 function queueBanner(state: GameState, text: string, now: number) {
   state.banner = text
   state.bannerUntil = now + 2300
@@ -425,7 +474,9 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
   const activeEvent = state.activeEvent
   const projectileMul = activeEvent?.projectileBonus ?? 1
   const power = dominantPower(player)
-  const dir = norm(target.x - player.x, target.y - player.y)
+  const referenceSpeed =
+    power === "fire" ? 8.8 : power === "seeds" ? 9.2 : power === "speed" ? 10.5 : power === "shield" ? 7.4 : 8
+  const dir = aimWithMiss(player, target, { x: target.vx, y: target.vy }, referenceSpeed, 0.02)
   player.facing = dir
 
   if (power === "fire") {
@@ -441,7 +492,7 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
         y: player.y,
         vx: Math.cos(angle) * 8.8,
         vy: Math.sin(angle) * 8.8,
-        life: 80,
+        life: 1500,
         radius: 6 + player.fireStacks,
         color: "#ff6b2f",
         damage: (8 + player.fireStacks * 4) * projectileMul,
@@ -462,7 +513,7 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
         y: player.y,
         vx: Math.cos(angle) * 9.2,
         vy: Math.sin(angle) * 9.2,
-        life: 62,
+        life: 1500,
         radius: 3.6,
         color: "#e8c96f",
         damage: (4 + player.seedStacks * 2) * projectileMul,
@@ -479,7 +530,7 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
       y: player.y,
       vx: dir.x * 10.5,
       vy: dir.y * 10.5,
-      life: 52,
+      life: 1500,
       radius: 4.2,
       color: "#6bc9ff",
       damage: (5 + player.speedStacks * 2) * projectileMul,
@@ -495,7 +546,7 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
       y: player.y,
       vx: dir.x * 7.4,
       vy: dir.y * 7.4,
-      life: 74,
+      life: 1500,
       radius: 6.5,
       color: "#f0d58f",
       damage: (6 + player.shieldStacks * 2) * projectileMul,
@@ -511,7 +562,7 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
       y: player.y,
       vx: dir.x * 8,
       vy: dir.y * 8,
-      life: 58,
+      life: 1500,
       radius: 4,
       color: "#d5bb7a",
       damage: 5 * projectileMul,
@@ -533,7 +584,7 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
         y: player.y,
         vx: Math.cos(angle) * 6,
         vy: Math.sin(angle) * 6,
-        life: 34,
+        life: 900,
         radius: 5,
         color: "#ff9152",
         damage: 5 * projectileMul,
@@ -574,7 +625,8 @@ function enemyEatFood(enemy: EnemyState, food: FoodType) {
 }
 
 function enemyShoot(state: GameState, enemy: EnemyState, target: PlayerState) {
-  const dir = norm(target.x - enemy.x, target.y - enemy.y)
+  const shotSpeed = 5.2 + enemy.seedLevel * 0.35
+  const dir = aimWithMiss(enemy, target, { x: target.vx, y: target.vy }, shotSpeed, 0.05)
   const damageMul = 1 + enemy.fireLevel * 0.15
   const count = enemy.type === "boss" ? 3 : enemy.type === "miniBoss" ? 2 : 1
   for (let i = 0; i < count; i++) {
@@ -586,9 +638,9 @@ function enemyShoot(state: GameState, enemy: EnemyState, target: PlayerState) {
       ownerId: enemy.id,
       x: enemy.x,
       y: enemy.y,
-      vx: Math.cos(angle) * (5.2 + enemy.seedLevel * 0.35),
-      vy: Math.sin(angle) * (5.2 + enemy.seedLevel * 0.35),
-      life: 92,
+      vx: Math.cos(angle) * shotSpeed,
+      vy: Math.sin(angle) * shotSpeed,
+      life: 1500,
       radius: enemy.type === "boss" ? 7 : 5,
       color: enemy.fireLevel > 0 ? "#ff7d4a" : "#7fc46d",
       damage: (enemy.type === "boss" ? 13 : enemy.type === "miniBoss" ? 9 : 6) * damageMul,
@@ -608,13 +660,164 @@ function bossRadial(state: GameState, enemy: EnemyState) {
       y: enemy.y,
       vx: Math.cos(angle) * 4.8,
       vy: Math.sin(angle) * 4.8,
-      life: 90,
+      life: 1500,
       radius: 6,
       color: "#ff5e5e",
       damage: 8,
       kind: "venom",
     })
   }
+}
+
+function drawSnake(ctx: CanvasRenderingContext2D, enemy: EnemyState, now: number) {
+  const tier = ENEMY_TIERS[enemy.tier]
+  if (enemy.type === "raptor") {
+    ctx.save()
+    ctx.translate(enemy.x, enemy.y)
+    ctx.rotate(enemy.heading)
+    ctx.fillStyle = "rgba(0,0,0,0.22)"
+    ctx.beginPath()
+    ctx.ellipse(3, 12, enemy.size, 5, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = enemy.hitFlash > 0.1 ? "#fff5dd" : "#6e4b1f"
+    ctx.beginPath()
+    ctx.ellipse(0, 0, enemy.size * 0.95, enemy.size * 0.65, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = "#c6923e"
+    ctx.beginPath()
+    ctx.moveTo(-enemy.size * 0.1, 0)
+    ctx.lineTo(-enemy.size * 1.3, -enemy.size * 0.7)
+    ctx.lineTo(-enemy.size * 0.45, -enemy.size * 0.1)
+    ctx.closePath()
+    ctx.fill()
+    ctx.beginPath()
+    ctx.moveTo(-enemy.size * 0.1, 0)
+    ctx.lineTo(-enemy.size * 1.3, enemy.size * 0.7)
+    ctx.lineTo(-enemy.size * 0.45, enemy.size * 0.1)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = "#f1d59d"
+    ctx.beginPath()
+    ctx.arc(enemy.size * 0.72, 0, enemy.size * 0.44, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = "#d67c1f"
+    ctx.beginPath()
+    ctx.moveTo(enemy.size * 1.05, 0)
+    ctx.lineTo(enemy.size * 1.55, -3)
+    ctx.lineTo(enemy.size * 1.55, 3)
+    ctx.closePath()
+    ctx.fill()
+    ctx.restore()
+    return
+  }
+
+  if (enemy.type === "dingo") {
+    ctx.save()
+    ctx.translate(enemy.x, enemy.y)
+    ctx.rotate(enemy.heading)
+    ctx.fillStyle = "rgba(0,0,0,0.22)"
+    ctx.beginPath()
+    ctx.ellipse(3, 14, enemy.size * 1.05, 6, 0, 0, Math.PI * 2)
+    ctx.fill()
+    const body = ctx.createLinearGradient(-enemy.size, 0, enemy.size, 0)
+    body.addColorStop(0, "#7a5734")
+    body.addColorStop(1, "#b67b46")
+    ctx.fillStyle = enemy.hitFlash > 0.1 ? "#fff5dd" : body
+    ctx.beginPath()
+    ctx.ellipse(-2, 0, enemy.size * 1.05, enemy.size * 0.72, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = "#cda16b"
+    ctx.beginPath()
+    ctx.arc(enemy.size * 0.78, -1, enemy.size * 0.52, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = "#6b431f"
+    ctx.beginPath()
+    ctx.moveTo(enemy.size * 0.75, -enemy.size * 0.45)
+    ctx.lineTo(enemy.size * 0.32, -enemy.size * 1.05)
+    ctx.lineTo(enemy.size * 0.95, -enemy.size * 0.65)
+    ctx.closePath()
+    ctx.fill()
+    ctx.beginPath()
+    ctx.moveTo(enemy.size * 0.52, enemy.size * 0.42)
+    ctx.lineTo(enemy.size * 0.98, enemy.size * 0.88)
+    ctx.lineTo(enemy.size * 0.9, enemy.size * 0.28)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillStyle = "#1f1308"
+    ctx.beginPath()
+    ctx.arc(enemy.size * 1.02, -2, 1.8, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+    return
+  }
+
+  const facing = enemy.heading
+  const bodyLength = enemy.type === "boss" ? 10 : enemy.type === "miniBoss" ? 8 : 6
+  const bodyGap = enemy.size * 0.9
+
+  ctx.save()
+  ctx.translate(enemy.x, enemy.y)
+
+  ctx.fillStyle = "rgba(0,0,0,0.22)"
+  for (let i = bodyLength - 1; i >= 0; i--) {
+    const wave = Math.sin(now * 0.012 + enemy.wiggle + i * 0.68) * enemy.size * 0.34
+    const tx = -Math.cos(facing) * i * bodyGap + Math.cos(facing + Math.PI / 2) * wave
+    const ty = -Math.sin(facing) * i * bodyGap + Math.sin(facing + Math.PI / 2) * wave
+    const r = enemy.size * (1 - i / (bodyLength * 1.8))
+    ctx.beginPath()
+    ctx.arc(tx + 3, ty + 4, r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  for (let i = bodyLength - 1; i >= 0; i--) {
+    const wave = Math.sin(now * 0.012 + enemy.wiggle + i * 0.68) * enemy.size * 0.34
+    const tx = -Math.cos(facing) * i * bodyGap + Math.cos(facing + Math.PI / 2) * wave
+    const ty = -Math.sin(facing) * i * bodyGap + Math.sin(facing + Math.PI / 2) * wave
+    const r = enemy.size * (1 - i / (bodyLength * 1.8))
+    const body = ctx.createRadialGradient(tx - r * 0.35, ty - r * 0.35, 1, tx, ty, r)
+    body.addColorStop(0, enemy.hitFlash > 0.15 ? "#fff4dc" : tier.color)
+    body.addColorStop(1, tier.colorDark)
+    ctx.fillStyle = body
+    ctx.beginPath()
+    ctx.arc(tx, ty, r, 0, Math.PI * 2)
+    ctx.fill()
+    if (i % 2 === 0) {
+      ctx.fillStyle = "rgba(255,255,255,0.1)"
+      ctx.beginPath()
+      ctx.arc(tx - r * 0.25, ty - r * 0.25, r * 0.35, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+
+  const headR = enemy.size + (enemy.type === "boss" ? 5 : enemy.type === "miniBoss" ? 2 : 0)
+  const head = ctx.createRadialGradient(-headR * 0.3, -headR * 0.3, 1, 0, 0, headR)
+  head.addColorStop(0, enemy.hitFlash > 0.15 ? "#fff4dc" : tier.color)
+  head.addColorStop(1, tier.colorDark)
+  ctx.fillStyle = head
+  ctx.beginPath()
+  ctx.arc(0, 0, headR, 0, Math.PI * 2)
+  ctx.fill()
+
+  const eyeOffset = headR * 0.35
+  for (const side of [-1, 1]) {
+    ctx.fillStyle = "#f7edac"
+    ctx.beginPath()
+    ctx.arc(headR * 0.18, eyeOffset * side, 2.7, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = "#1f1308"
+    ctx.beginPath()
+    ctx.arc(headR * 0.55, eyeOffset * side, 1.3, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  ctx.strokeStyle = enemy.type === "boss" ? "#ff5f5f" : "#d83d3d"
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(headR - 2, 0)
+  ctx.lineTo(headR + 9, 0)
+  ctx.stroke()
+
+  ctx.restore()
 }
 
 function saveHighscore(entry: HighscoreEntry) {
@@ -651,6 +854,7 @@ export default function SquirrelGame() {
   const playerIdRef = useRef<string>(uid())
   const roomRoleRef = useRef<RoomRole>(null)
   const remoteInputsRef = useRef<Record<string, InputState>>({})
+  const localTargetRef = useRef<Vec | null>(null)
   const scoreSavedRef = useRef(false)
   const lastStateBroadcastRef = useRef(0)
 
@@ -880,6 +1084,9 @@ export default function SquirrelGame() {
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
       keysRef.current[event.key.toLowerCase()] = true
+      if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(event.key.toLowerCase())) {
+        localTargetRef.current = null
+      }
     }
     const up = (event: KeyboardEvent) => {
       keysRef.current[event.key.toLowerCase()] = false
@@ -899,6 +1106,7 @@ export default function SquirrelGame() {
       down: !!(keys["s"] || keys["arrowdown"]),
       left: !!(keys["a"] || keys["arrowleft"]),
       right: !!(keys["d"] || keys["arrowright"]),
+      target: localTargetRef.current,
     }
   }, [])
 
@@ -910,6 +1118,30 @@ export default function SquirrelGame() {
       input: localInput(),
     } satisfies RoomMessage)
   }, [localInput, status])
+
+  const setPointerTarget = useCallback((clientX: number, clientY: number) => {
+    const canvas = canvasRef.current
+    if (!canvas || status !== "playing") return
+    const rect = canvas.getBoundingClientRect()
+    const target = {
+      x: clamp(((clientX - rect.left) / rect.width) * WORLD.w, 0, WORLD.w),
+      y: clamp(((clientY - rect.top) / rect.height) * WORLD.h, 0, WORLD.h),
+    }
+    localTargetRef.current = target
+
+    const state = stateRef.current
+    if (!state) return
+    const localPlayer = state.players.find((player) => player.id === playerIdRef.current)
+    if (localPlayer) localPlayer.target = target
+  }, [status])
+
+  const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    setPointerTarget(event.clientX, event.clientY)
+  }
+
+  const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.buttons === 1) setPointerTarget(event.clientX, event.clientY)
+  }
 
   const simulate = useCallback(
     (state: GameState, dt: number, now: number) => {
@@ -946,6 +1178,8 @@ export default function SquirrelGame() {
               player.hp = Math.min(player.maxHp, player.hp + 24)
               player.score += 30
             }
+            const rewardFocus = state.players.find((player) => player.alive) ?? { x: WORLD.w / 2, y: WORLD.h / 2 }
+            dropWaveReward(state, rewardFocus)
             state.sharedScore = state.players.reduce((sum, player) => sum + player.score, 0)
             queueBanner(state, `Level ${nextLevel.level}: ${nextLevel.name}`, now)
           } else {
@@ -954,6 +1188,10 @@ export default function SquirrelGame() {
             state.pendingSpawns.forEach((spawn) => {
               spawn.at = now + spawn.at
             })
+            if (state.wave > 1) {
+              const rewardFocus = state.players.find((player) => player.alive) ?? { x: WORLD.w / 2, y: WORLD.h / 2 }
+              dropWaveReward(state, rewardFocus)
+            }
             queueBanner(state, `Wave ${state.wave}/${level.waves}`, now)
           }
         }
@@ -986,11 +1224,29 @@ export default function SquirrelGame() {
         if (input.up) ay -= 1
         if (input.down) ay += 1
         if (ax || ay) {
+          player.target = null
           const direction = norm(ax, ay)
           const speedMul = (state.activeEvent?.playerSpeedMul ?? 1) * (1 + player.speedStacks * 0.15)
           player.vx += direction.x * 0.95 * speedMul * dt
           player.vy += direction.y * 0.95 * speedMul * dt
           player.facing = direction
+        } else if (input.target ?? player.target) {
+          player.target = input.target ?? player.target
+          if (player.target) {
+            const tdx = player.target.x - player.x
+            const tdy = player.target.y - player.y
+            const td = Math.hypot(tdx, tdy)
+            if (td < 8) {
+              player.target = null
+              if (player.id === playerIdRef.current) localTargetRef.current = null
+            } else {
+              const direction = norm(tdx, tdy)
+              const speedMul = (state.activeEvent?.playerSpeedMul ?? 1) * (1 + player.speedStacks * 0.15)
+              player.vx += direction.x * 0.82 * speedMul * dt
+              player.vy += direction.y * 0.82 * speedMul * dt
+              player.facing = direction
+            }
+          }
         }
 
         const maxSpeed = 4.6 * (1 + player.speedStacks * 0.16) * (state.activeEvent?.playerSpeedMul ?? 1)
@@ -1033,7 +1289,7 @@ export default function SquirrelGame() {
 
         let move = norm(target.x - enemy.x, target.y - enemy.y)
         const distance = Math.hypot(target.x - enemy.x, target.y - enemy.y)
-        enemy.wiggle += 0.13 * dt
+        enemy.wiggle += 0.22 * dt
         enemy.orbitSeed += 0.018 * dt
 
         if (enemy.type === "spitter") {
@@ -1057,6 +1313,26 @@ export default function SquirrelGame() {
           if (enemy.reload <= 0) {
             enemyShoot(state, enemy, target)
             enemy.reload = ENEMY_ARCHETYPES.orbiter.rangedCooldown - enemy.seedLevel * 100
+          }
+        } else if (enemy.type === "raptor") {
+          const sweepTarget = {
+            x: target.x + Math.cos(enemy.orbitSeed * 2.2) * 90,
+            y: target.y + Math.sin(enemy.orbitSeed * 2.2) * 90,
+          }
+          move = norm(sweepTarget.x - enemy.x, sweepTarget.y - enemy.y)
+          if (enemy.dashCooldown <= 0) {
+            enemy.dash = 42
+            enemy.dashCooldown = 1250
+          }
+        } else if (enemy.type === "dingo") {
+          if (distance < 120) {
+            move = norm(target.x - enemy.x, target.y - enemy.y)
+          } else {
+            move = norm(target.x + Math.sin(enemy.orbitSeed) * 35 - enemy.x, target.y - enemy.y)
+          }
+          if (enemy.dashCooldown <= 0) {
+            enemy.dash = 18
+            enemy.dashCooldown = 2400
           }
         } else if (enemy.type === "miniBoss") {
           if (enemy.reload <= 0) {
@@ -1083,10 +1359,22 @@ export default function SquirrelGame() {
         const eventMul = state.activeEvent?.enemySpeedMul ?? 1
         const dashMul = enemy.dash > 0 ? 2.6 : 1
         const speedMul = (1 + enemy.speedLevel * 0.12) * eventMul
-        const drift = enemy.type === "slither" || enemy.type === "splitter" ? Math.sin(enemy.wiggle) * 0.38 : 0
-        const moveAngle = Math.atan2(move.y, move.x) + drift
-        enemy.x += Math.cos(moveAngle) * enemy.speed * speedMul * dashMul * dt
-        enemy.y += Math.sin(moveAngle) * enemy.speed * speedMul * dashMul * dt
+        const desiredHeading = Math.atan2(move.y, move.x)
+        let diff = desiredHeading - enemy.heading
+        while (diff > Math.PI) diff -= Math.PI * 2
+        while (diff < -Math.PI) diff += Math.PI * 2
+        enemy.heading += diff * 0.12 * dt
+        const drift =
+          enemy.type === "slither" || enemy.type === "splitter" || enemy.type === "boss" || enemy.type === "miniBoss"
+            ? Math.sin(enemy.wiggle) * 0.55
+            : Math.sin(enemy.wiggle) * 0.22
+        const moveAngle = enemy.heading + drift
+        const stepX = Math.cos(moveAngle) * enemy.speed * speedMul * dashMul * dt
+        const stepY = Math.sin(moveAngle) * enemy.speed * speedMul * dashMul * dt
+        enemy.vx = stepX
+        enemy.vy = stepY
+        enemy.x += stepX
+        enemy.y += stepY
         enemy.dash = Math.max(0, enemy.dash - dt * 16.6)
 
         for (let i = state.foods.length - 1; i >= 0; i--) {
@@ -1233,6 +1521,22 @@ export default function SquirrelGame() {
       ctx.fillText(food.type.emoji, food.x, food.y)
     }
 
+    const localPlayer = state.players.find((player) => player.id === playerIdRef.current)
+    if (localPlayer?.target) {
+      const pulse = 7 + Math.sin(now / 120) * 2
+      ctx.strokeStyle = "rgba(255,255,255,0.55)"
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(localPlayer.target.x, localPlayer.target.y, pulse, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(localPlayer.target.x - 9, localPlayer.target.y)
+      ctx.lineTo(localPlayer.target.x + 9, localPlayer.target.y)
+      ctx.moveTo(localPlayer.target.x, localPlayer.target.y - 9)
+      ctx.lineTo(localPlayer.target.x, localPlayer.target.y + 9)
+      ctx.stroke()
+    }
+
     for (const projectile of state.projectiles) {
       const glow = ctx.createRadialGradient(projectile.x, projectile.y, 1, projectile.x, projectile.y, projectile.radius * 2)
       glow.addColorStop(0, `${projectile.color}ee`)
@@ -1249,36 +1553,7 @@ export default function SquirrelGame() {
 
     for (const enemy of state.enemies) {
       const tier = ENEMY_TIERS[enemy.tier]
-      ctx.save()
-      ctx.translate(enemy.x, enemy.y)
-      ctx.fillStyle = "rgba(0,0,0,0.25)"
-      ctx.beginPath()
-      ctx.ellipse(3, enemy.size + 5, enemy.size * 0.95, 5, 0, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.fillStyle = enemy.hitFlash > 0.1 ? "#fff5dd" : tier.colorDark
-      ctx.beginPath()
-      ctx.arc(0, 0, enemy.size + 2, 0, Math.PI * 2)
-      ctx.fill()
-      const body = ctx.createRadialGradient(-enemy.size * 0.3, -enemy.size * 0.3, 1, 0, 0, enemy.size)
-      body.addColorStop(0, tier.color)
-      body.addColorStop(1, tier.colorDark)
-      ctx.fillStyle = body
-      ctx.beginPath()
-      ctx.arc(0, 0, enemy.size, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.fillStyle = "#1f1308"
-      ctx.beginPath()
-      ctx.arc(enemy.size * 0.26, -3, 2.1, 0, Math.PI * 2)
-      ctx.arc(enemy.size * 0.26, 3, 2.1, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.fillStyle = "#fff"
-      ctx.font = enemy.type === "boss" ? "bold 12px ui-sans-serif" : "bold 10px ui-sans-serif"
-      ctx.fillText(
-        enemy.type === "boss" ? "BOSS" : enemy.type === "miniBoss" ? "MINI" : enemy.type[0].toUpperCase(),
-        0,
-        3,
-      )
-      ctx.restore()
+      drawSnake(ctx, enemy, now)
 
       const barW = enemy.type === "boss" ? 88 : enemy.type === "miniBoss" ? 64 : 36
       const ratio = clamp(enemy.hp / enemy.maxHp, 0, 1)
@@ -1290,6 +1565,7 @@ export default function SquirrelGame() {
 
     for (const player of state.players) {
       if (!player.alive) continue
+      const fusionColor = playerColor(player)
       ctx.save()
       ctx.translate(player.x, player.y)
       const facingAngle = Math.atan2(player.facing.y, player.facing.x)
@@ -1302,16 +1578,40 @@ export default function SquirrelGame() {
       ctx.save()
       ctx.translate(-player.r - 4, 0)
       ctx.rotate(Math.sin(now / 180 + player.x * 0.02) * 0.28)
-      ctx.fillStyle = "#8a5526"
+      const tailGradient = ctx.createLinearGradient(-18, 0, 8, 0)
+      tailGradient.addColorStop(0, "#8a5526")
+      tailGradient.addColorStop(1, "#b97837")
+      ctx.fillStyle = tailGradient
       ctx.beginPath()
       ctx.ellipse(-7, 0, 14, 9, 0, 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
 
-      ctx.fillStyle = player.hitFlash > 0.1 ? "#fff1cf" : playerColor(player)
+      if (dominantPower(player) !== "none") {
+        ctx.strokeStyle = fusionColor
+        ctx.lineWidth = 3
+        ctx.globalAlpha = 0.7 + Math.sin(now / 140) * 0.18
+        ctx.beginPath()
+        ctx.arc(0, 0, player.r + 5, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+      }
+
+      const bodyGradient = ctx.createRadialGradient(-4, -4, 2, 0, 0, player.r)
+      bodyGradient.addColorStop(0, player.hitFlash > 0.1 ? "#fff1cf" : "#cf8a3f")
+      bodyGradient.addColorStop(1, "#a8631f")
+      ctx.fillStyle = bodyGradient
       ctx.beginPath()
       ctx.arc(0, 0, player.r, 0, Math.PI * 2)
       ctx.fill()
+      if (dominantPower(player) !== "none") {
+        ctx.fillStyle = fusionColor
+        ctx.globalAlpha = 0.28
+        ctx.beginPath()
+        ctx.arc(0, 0, player.r, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.globalAlpha = 1
+      }
       ctx.fillStyle = "#f1d399"
       ctx.beginPath()
       ctx.ellipse(3, 2, 8, 10, 0, 0, Math.PI * 2)
@@ -1407,6 +1707,8 @@ export default function SquirrelGame() {
           ref={canvasRef}
           width={WORLD.w}
           height={WORLD.h}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
           className="block w-full bg-[#2f512b]"
           style={{ aspectRatio: `${WORLD.w}/${WORLD.h}` }}
         />

@@ -88,7 +88,7 @@ export const ENEMY_TIERS: EnemyTier[] = [
   { title: "Mythic", hp: 145, speed: 3.25, size: 18, reward: 60, color: "#db5252", colorDark: "#7f2323" },
 ]
 
-export type EnemyType = "slither" | "spitter" | "charger" | "splitter" | "orbiter" | "miniBoss" | "boss"
+export type EnemyType = "slither" | "spitter" | "charger" | "splitter" | "orbiter" | "raptor" | "dingo" | "miniBoss" | "boss"
 
 export interface EnemyArchetype {
   type: EnemyType
@@ -156,6 +156,28 @@ export const ENEMY_ARCHETYPES: Record<EnemyType, EnemyArchetype> = {
     contactDamage: 9,
     rangedCooldown: 1400,
     summonCooldown: 0,
+    splitCount: 0,
+  },
+  raptor: {
+    type: "raptor",
+    name: "Raptor Bird",
+    tierBias: 1,
+    hpMul: 0.72,
+    speedMul: 1.45,
+    contactDamage: 12,
+    rangedCooldown: 0,
+    summonCooldown: 1600,
+    splitCount: 0,
+  },
+  dingo: {
+    type: "dingo",
+    name: "Dingo Tank",
+    tierBias: 2,
+    hpMul: 1.9,
+    speedMul: 0.82,
+    contactDamage: 16,
+    rangedCooldown: 0,
+    summonCooldown: 2600,
     splitCount: 0,
   },
   miniBoss: {
