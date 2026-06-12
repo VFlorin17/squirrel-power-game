@@ -8,8 +8,8 @@ export interface FoodType {
   power: PowerId
   powerName: string
   description: string
-  duration: number // ms the power lasts (0 = instant/no timed power)
   heal: number
+  stackValue: number
 }
 
 export const FOODS: FoodType[] = [
@@ -20,9 +20,9 @@ export const FOODS: FoodType[] = [
     color: "#8a5a2b",
     power: "none",
     powerName: "Snack",
-    description: "Normal nut. Restores energy.",
-    duration: 0,
-    heal: 20,
+    description: "Heal and score boost.",
+    heal: 16,
+    stackValue: 0,
   },
   {
     id: "apple",
@@ -30,21 +30,21 @@ export const FOODS: FoodType[] = [
     emoji: "🍎",
     color: "#e23b3b",
     power: "seeds",
-    powerName: "Seed Spit",
-    description: "Spit a spread of 10 seeds! Same food stacks duration.",
-    duration: 9000,
-    heal: 10,
+    powerName: "Seed Fusion",
+    description: "Build a fast burst attack.",
+    heal: 8,
+    stackValue: 1,
   },
   {
     id: "pepper",
     name: "Red Pepper",
     emoji: "🌶️",
-    color: "#d12f2f",
+    color: "#ff6b2f",
     power: "fire",
-    powerName: "Fire Breath",
-    description: "Throw fireballs! Same food stacks duration.",
-    duration: 9000,
-    heal: 5,
+    powerName: "Fire Fusion",
+    description: "Turn into a fire squirrel and evolve the flame.",
+    heal: 6,
+    stackValue: 1,
   },
   {
     id: "blueberry",
@@ -52,148 +52,183 @@ export const FOODS: FoodType[] = [
     emoji: "🫐",
     color: "#4a6cf7",
     power: "speed",
-    powerName: "Dash",
-    description: "Move much faster. Same food stacks duration.",
-    duration: 8000,
-    heal: 10,
+    powerName: "Speed Fusion",
+    description: "Boost movement and rapid attacks.",
+    heal: 8,
+    stackValue: 1,
   },
   {
     id: "walnut",
     name: "Walnut",
     emoji: "🥜",
-    color: "#b58a4a",
+    color: "#d7b06a",
     power: "shield",
-    powerName: "Nut Shield",
-    description: "Stacks up to 3 shields that stay on you.",
-    duration: 0,
+    powerName: "Nut Guard",
+    description: "Gain a shield layer and tougher fusion.",
     heal: 10,
+    stackValue: 1,
   },
 ]
 
-export interface SnakeStage {
-  name: string
+export interface EnemyTier {
+  title: string
+  hp: number
+  speed: number
+  size: number
+  reward: number
   color: string
   colorDark: string
-  speed: number
-  segments: number
-  segSize: number
-  hp: number
 }
 
-export const SNAKE_STAGES: SnakeStage[] = [
-  { name: "Garter Snake", color: "#6fae5a", colorDark: "#4d8a3c", speed: 1.5, segments: 6, segSize: 9, hp: 30 },
-  { name: "Rat Snake", color: "#9aa84a", colorDark: "#6f7d2f", speed: 1.9, segments: 9, segSize: 10, hp: 50 },
-  { name: "Python", color: "#c9a23a", colorDark: "#9a7820", speed: 2.3, segments: 13, segSize: 12, hp: 80 },
-  { name: "Cobra", color: "#d97a2b", colorDark: "#a8531a", speed: 2.8, segments: 17, segSize: 13, hp: 120 },
-  { name: "Viper King", color: "#c43a3a", colorDark: "#8f2424", speed: 3.3, segments: 22, segSize: 15, hp: 170 },
+export const ENEMY_TIERS: EnemyTier[] = [
+  { title: "Young", hp: 22, speed: 1.8, size: 11, reward: 16, color: "#7fd36f", colorDark: "#4d8a3c" },
+  { title: "Hunter", hp: 38, speed: 2.15, size: 12, reward: 22, color: "#91c45d", colorDark: "#587a2f" },
+  { title: "Alpha", hp: 62, speed: 2.5, size: 14, reward: 30, color: "#d4b042", colorDark: "#8f6b1f" },
+  { title: "Elite", hp: 95, speed: 2.9, size: 16, reward: 42, color: "#e18d3d", colorDark: "#924f1d" },
+  { title: "Mythic", hp: 145, speed: 3.25, size: 18, reward: 60, color: "#db5252", colorDark: "#7f2323" },
 ]
 
-// Gameplay tuning
-export const MAX_SHIELDS = 3
-export const MAX_SNAKES = 10
-export const SNAKE_EVOLVE_MS = 14000 // each snake evolves a stage every this long it survives
-export const SEED_DMG = 4
-export const FIRE_DMG = 11
+export type EnemyType = "slither" | "spitter" | "charger" | "splitter" | "orbiter" | "miniBoss" | "boss"
 
-// Fraction of the player's dash effect a snake gets when it eats a speed food
-export const SNAKE_FOOD_DASH_FRACTION = 0.03
-
-// Fusion biomes: each fusion shifts the whole look AND the dynamics of the game
-export interface Biome {
-  id: string
+export interface EnemyArchetype {
+  type: EnemyType
   name: string
-  tagline: string
+  tierBias: number
+  hpMul: number
+  speedMul: number
+  contactDamage: number
+  rangedCooldown: number
+  summonCooldown: number
+  splitCount: number
+}
+
+export const ENEMY_ARCHETYPES: Record<EnemyType, EnemyArchetype> = {
+  slither: {
+    type: "slither",
+    name: "Slither Snake",
+    tierBias: 0,
+    hpMul: 1,
+    speedMul: 1,
+    contactDamage: 9,
+    rangedCooldown: 0,
+    summonCooldown: 0,
+    splitCount: 0,
+  },
+  spitter: {
+    type: "spitter",
+    name: "Spitter Snake",
+    tierBias: 0,
+    hpMul: 0.9,
+    speedMul: 0.95,
+    contactDamage: 8,
+    rangedCooldown: 1800,
+    summonCooldown: 0,
+    splitCount: 0,
+  },
+  charger: {
+    type: "charger",
+    name: "Charger Snake",
+    tierBias: 1,
+    hpMul: 1.05,
+    speedMul: 1.15,
+    contactDamage: 14,
+    rangedCooldown: 0,
+    summonCooldown: 2200,
+    splitCount: 0,
+  },
+  splitter: {
+    type: "splitter",
+    name: "Hydra Snake",
+    tierBias: 1,
+    hpMul: 1.1,
+    speedMul: 0.95,
+    contactDamage: 10,
+    rangedCooldown: 0,
+    summonCooldown: 0,
+    splitCount: 2,
+  },
+  orbiter: {
+    type: "orbiter",
+    name: "Orbiter Snake",
+    tierBias: 1,
+    hpMul: 0.95,
+    speedMul: 1.08,
+    contactDamage: 9,
+    rangedCooldown: 1400,
+    summonCooldown: 0,
+    splitCount: 0,
+  },
+  miniBoss: {
+    type: "miniBoss",
+    name: "Mini Boss",
+    tierBias: 2,
+    hpMul: 2.4,
+    speedMul: 0.95,
+    contactDamage: 18,
+    rangedCooldown: 1200,
+    summonCooldown: 3600,
+    splitCount: 0,
+  },
+  boss: {
+    type: "boss",
+    name: "Viper King",
+    tierBias: 4,
+    hpMul: 4.4,
+    speedMul: 0.88,
+    contactDamage: 24,
+    rangedCooldown: 900,
+    summonCooldown: 5200,
+    splitCount: 0,
+  },
+}
+
+export interface LevelConfig {
+  level: number
+  name: string
+  waves: number
+  enemyBudget: number
+  foodTarget: number
   bgTop: string
   bgBottom: string
-  grass: string
   accent: string
-  playerSpeedMul: number
-  snakeSpeedMul: number
-  friction: number // player damping per frame (lower = more slippery)
-  foodTarget: number // how many foods on the field
+  eventDelay: number
+  miniBossWave?: number
+  bossWave?: number
 }
 
-export const BIOMES: Biome[] = [
-  {
-    id: "grove",
-    name: "Verdant Grove",
-    tagline: "Balanced woodland",
-    bgTop: "#4a7d40",
-    bgBottom: "#33602e",
-    grass: "rgba(255,255,255,0.05)",
-    accent: "#7fe07f",
-    playerSpeedMul: 1,
-    snakeSpeedMul: 1,
-    friction: 0.86,
-    foodTarget: 5,
-  },
-  {
-    id: "ember",
-    name: "Ember Wastes",
-    tagline: "Snakes turn aggressive & fast",
-    bgTop: "#7a2f1c",
-    bgBottom: "#3d1410",
-    grass: "rgba(255,180,80,0.07)",
-    accent: "#ff7a1a",
-    playerSpeedMul: 1.05,
-    snakeSpeedMul: 1.35,
-    friction: 0.86,
-    foodTarget: 4,
-  },
-  {
-    id: "frost",
-    name: "Frost Hollow",
-    tagline: "Slippery ice, everything slides",
-    bgTop: "#3a6f8a",
-    bgBottom: "#1f3d52",
-    grass: "rgba(200,240,255,0.09)",
-    accent: "#7fd6ff",
-    playerSpeedMul: 1.1,
-    snakeSpeedMul: 0.85,
-    friction: 0.95,
-    foodTarget: 5,
-  },
-  {
-    id: "bloom",
-    name: "Twilight Bloom",
-    tagline: "Food blooms everywhere",
-    bgTop: "#43275f",
-    bgBottom: "#241038",
-    grass: "rgba(255,200,255,0.07)",
-    accent: "#d98fff",
-    playerSpeedMul: 1,
-    snakeSpeedMul: 1.1,
-    friction: 0.86,
-    foodTarget: 9,
-  },
+export const LEVELS: LevelConfig[] = [
+  { level: 1, name: "Woodland Edge", waves: 3, enemyBudget: 5, foodTarget: 6, bgTop: "#537f45", bgBottom: "#2f512b", accent: "#9dde6d", eventDelay: 9000 },
+  { level: 2, name: "Root Run", waves: 3, enemyBudget: 7, foodTarget: 6, bgTop: "#5d7340", bgBottom: "#3f4d28", accent: "#d2e672", eventDelay: 8600 },
+  { level: 3, name: "Foxglove Hollow", waves: 4, enemyBudget: 8, foodTarget: 6, bgTop: "#5f6340", bgBottom: "#362f22", accent: "#f0cb73", eventDelay: 8200 },
+  { level: 4, name: "Storm Burrow", waves: 4, enemyBudget: 10, foodTarget: 7, bgTop: "#425a7c", bgBottom: "#242d48", accent: "#7fb7ff", eventDelay: 7800 },
+  { level: 5, name: "Burning Orchard", waves: 4, enemyBudget: 12, foodTarget: 7, bgTop: "#7e4426", bgBottom: "#3a1c13", accent: "#ff9a52", eventDelay: 7600, miniBossWave: 4 },
+  { level: 6, name: "Moonlit Thicket", waves: 4, enemyBudget: 14, foodTarget: 7, bgTop: "#4d4174", bgBottom: "#231733", accent: "#c9a3ff", eventDelay: 7400 },
+  { level: 7, name: "Crystal Creek", waves: 5, enemyBudget: 16, foodTarget: 8, bgTop: "#2f7083", bgBottom: "#163240", accent: "#87ecff", eventDelay: 7200 },
+  { level: 8, name: "Twisted Canopy", waves: 5, enemyBudget: 18, foodTarget: 8, bgTop: "#45633b", bgBottom: "#1f2d1c", accent: "#7dff99", eventDelay: 7000 },
+  { level: 9, name: "Rift of Fangs", waves: 5, enemyBudget: 21, foodTarget: 8, bgTop: "#652b37", bgBottom: "#260e14", accent: "#ff8da1", eventDelay: 6600 },
+  { level: 10, name: "Throne of Venom", waves: 5, enemyBudget: 24, foodTarget: 9, bgTop: "#4f1f1f", bgBottom: "#190809", accent: "#ff6b6b", eventDelay: 6200, bossWave: 5 },
 ]
 
-// Short, random timed events layered on top of the current biome
 export interface GameEvent {
   id: string
   name: string
   desc: string
   color: string
   duration: number
+  enemySpeedMul?: number
+  playerSpeedMul?: number
+  foodBonus?: number
+  enemyDamageMul?: number
+  projectileBonus?: number
 }
 
 export const EVENTS: GameEvent[] = [
-  { id: "feast", name: "Acorn Feast", desc: "Food rains down!", color: "#ffd966", duration: 8000 },
-  { id: "frenzy", name: "Snake Frenzy", desc: "Snakes go wild!", color: "#ff5a4a", duration: 7000 },
-  { id: "swift", name: "Swift Paws", desc: "You move faster!", color: "#7fd6ff", duration: 8000 },
-  { id: "lull", name: "Sleepy Snakes", desc: "Snakes slow down.", color: "#a0e0a0", duration: 7000 },
-  { id: "split", name: "Hydra Hour", desc: "Slain snakes split into 3!", color: "#ff9a4a", duration: 9000 },
+  { id: "harvest", name: "Harvest Burst", desc: "Extra food appears.", color: "#ffd966", duration: 8000, foodBonus: 4 },
+  { id: "frenzy", name: "Predator Frenzy", desc: "Enemies move faster.", color: "#ff6b6b", duration: 7000, enemySpeedMul: 1.28, enemyDamageMul: 1.2 },
+  { id: "tailwind", name: "Tailwind", desc: "Players move faster.", color: "#7fb7ff", duration: 7000, playerSpeedMul: 1.24 },
+  { id: "supernova", name: "Supernova Nuts", desc: "Player attacks hit harder.", color: "#ffb347", duration: 6500, projectileBonus: 1.35 },
 ]
 
-export interface LevelConfig {
-  id: "level-1" | "level-2" | "boss"
-  name: string
-  objective: string
-  targetScore: number
-}
-
-export const LEVELS: LevelConfig[] = [
-  { id: "level-1", name: "Level 1", objective: "Reach 120 score to enter the deeper grove.", targetScore: 120 },
-  { id: "level-2", name: "Level 2", objective: "Reach 320 score to awaken the boss.", targetScore: 320 },
-  { id: "boss", name: "Boss", objective: "Defeat the Viper King to win the game.", targetScore: 320 },
-]
+export const MAX_PLAYERS = 2
+export const MAX_SHIELDS = 3
+export const PLAYER_MAX_STACK = 3
