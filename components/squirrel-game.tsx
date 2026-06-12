@@ -26,11 +26,14 @@ const UNLOCK_KEY = "squirrel-fusion-unlocked-level-v1"
 type Status = "menu" | "levelSelect" | "levelRoad" | "briefing" | "lobby" | "playing" | "paused" | "levelComplete" | "dead" | "won"
 type PlayMode = "single" | "coop" | "endless"
 type RoomRole = "host" | "guest" | null
+type WeaponPower = "fire" | "ice" | "seeds" | "speed"
 type BranchHint = {
   label: string
   icon: string
   color: string
   outcome: string
+  active?: boolean
+  unlocked?: boolean
 }
 
 interface Vec {
@@ -62,6 +65,9 @@ interface Projectile extends Vec {
   color: string
   damage: number
   kind: "seed" | "fire" | "spark" | "venom" | "ice" | "obsidian"
+  pierce?: number
+  slow?: number
+  splash?: number
 }
 
 interface Particle extends Vec {
@@ -185,13 +191,64 @@ let nextId = 1
 const uid = () => `${Date.now()}-${nextId++}`
 const ROAD_CARD_WIDTH = 320
 
-const BRANCH_META: Record<Exclude<PowerId, "none">, { label: string; icon: string; color: string; food: string }> = {
-  fire: { label: "Fire", icon: "F", color: "#ff7b3a", food: "Pepper" },
-  ice: { label: "Ice", icon: "I", color: "#91eaff", food: "Ice Melon" },
-  obsidian: { label: "Obsidian", icon: "O", color: "#5b5b78", food: "Pepper + Ice" },
-  seeds: { label: "Seed", icon: "S", color: "#f2ce68", food: "Apple" },
-  speed: { label: "Speed", icon: "Z", color: "#79cfff", food: "Blueberry" },
-  shield: { label: "Guard", icon: "G", color: "#eccd8d", food: "Walnut" },
+const WEAPON_META: Record<
+  WeaponPower,
+  {
+    weapon: string
+    icon: string
+    color: string
+    food: string
+    tiers: [
+      { name: string; desc: string },
+      { name: string; desc: string },
+      { name: string; desc: string },
+    ]
+  }
+> = {
+  fire: {
+    weapon: "Ember Bow",
+    icon: "F",
+    color: "#ff7b3a",
+    food: "Pepper",
+    tiers: [
+      { name: "Cinder", desc: "Single lance with clean burst damage." },
+      { name: "Pyre", desc: "Twin lances that pierce one target." },
+      { name: "Sunshot", desc: "Three lances that explode on impact." },
+    ],
+  },
+  ice: {
+    weapon: "Frost Rail",
+    icon: "I",
+    color: "#91eaff",
+    food: "Ice Melon",
+    tiers: [
+      { name: "Needle", desc: "Heavy shard with strong slow." },
+      { name: "Shiver", desc: "Twin rails that punch through lines." },
+      { name: "Glacier", desc: "Tri-rail spread with shatter splash." },
+    ],
+  },
+  seeds: {
+    weapon: "Bramble Fan",
+    icon: "S",
+    color: "#f2ce68",
+    food: "Apple",
+    tiers: [
+      { name: "Sprig", desc: "Three thorn fan for lane control." },
+      { name: "Bramble", desc: "Five thorns with better spread." },
+      { name: "Hedge", desc: "Seven thorn wall for crowd clear." },
+    ],
+  },
+  speed: {
+    weapon: "Bolt Needle",
+    icon: "Z",
+    color: "#79cfff",
+    food: "Blueberry",
+    tiers: [
+      { name: "Quickshot", desc: "Fast precision bolt." },
+      { name: "Blitz", desc: "Twin needles at high cadence." },
+      { name: "Rail", desc: "Triple burst with piercing finisher." },
+    ],
+  },
 }
 
 function rand(min: number, max: number) {
@@ -217,18 +274,22 @@ function stackForPower(player: PlayerState, power: PowerId) {
   if (power === "seeds") return player.seedStacks
   if (power === "speed") return player.speedStacks
   if (power === "shield") return player.shieldStacks
-  if (power === "obsidian") return Math.min(PLAYER_MAX_STACK, Math.max(player.fireStacks, player.iceStacks))
   return 0
 }
 
+function setWeaponStack(player: PlayerState, power: WeaponPower, value: number) {
+  if (power === "fire") player.fireStacks = value
+  else if (power === "ice") player.iceStacks = value
+  else if (power === "seeds") player.seedStacks = value
+  else player.speedStacks = value
+}
+
 function dominantPower(player: PlayerState): PowerId {
-  if (player.fireStacks > 0 && player.iceStacks > 0) return "obsidian"
-  const entries: [PowerId, number][] = [
+  const entries: [WeaponPower, number][] = [
     ["fire", player.fireStacks],
     ["ice", player.iceStacks],
     ["seeds", player.seedStacks],
     ["speed", player.speedStacks],
-    ["shield", player.shieldStacks],
   ]
   const top = entries.sort((a, b) => b[1] - a[1])[0]
   return top[1] > 0 ? top[0] : "none"
@@ -236,30 +297,10 @@ function dominantPower(player: PlayerState): PowerId {
 
 function powerLabel(player: PlayerState) {
   const power = dominantPower(player)
-  const stacks =
-    power === "fire"
-      ? player.fireStacks
-      : power === "ice"
-        ? player.iceStacks
-        : power === "obsidian"
-          ? Math.min(3, Math.max(player.fireStacks, player.iceStacks))
-      : power === "seeds"
-        ? player.seedStacks
-        : power === "speed"
-          ? player.speedStacks
-          : power === "shield"
-            ? player.shieldStacks
-            : 0
   if (power === "none") return "Plain Paws"
-  if (power === "fire") return ["Spark", "Flame", "Inferno"][stacks - 1] ?? "Inferno"
-  if (power === "ice") return ["Chill", "Freeze", "Blizzard"][stacks - 1] ?? "Blizzard"
-  if (power === "obsidian") {
-    const obsidianLevel = Math.min(3, Math.max(player.fireStacks, player.iceStacks))
-    return ["Ember Frost", "Glass Fang", "Obsidian Core"][obsidianLevel - 1] ?? "Obsidian Core"
-  }
-  if (power === "seeds") return ["Seedling", "Volley", "Thornstorm"][stacks - 1] ?? "Thornstorm"
-  if (power === "speed") return ["Dash", "Blitz", "Storm Paw"][stacks - 1] ?? "Storm Paw"
-  return ["Guard", "Bulwark", "Fortress"][stacks - 1] ?? "Fortress"
+  const tier = clamp(stackForPower(player, power), 1, PLAYER_MAX_STACK)
+  const meta = WEAPON_META[power]
+  return `${meta.weapon} / ${meta.tiers[tier - 1].name}`
 }
 
 function currentLevel(state: GameState): LevelConfig {
@@ -268,12 +309,7 @@ function currentLevel(state: GameState): LevelConfig {
 
 function playerColor(player: PlayerState) {
   const power = dominantPower(player)
-  if (power === "fire") return ["#e69138", "#f06b2f", "#ff4123"][player.fireStacks - 1] ?? "#ff4123"
-  if (power === "ice") return ["#95e6ff", "#62d9ff", "#b5f5ff"][player.iceStacks - 1] ?? "#b5f5ff"
-  if (power === "obsidian") return ["#4d4d5f", "#303046", "#191923"][Math.min(3, Math.max(player.fireStacks, player.iceStacks)) - 1] ?? "#191923"
-  if (power === "seeds") return ["#b17a3f", "#c89a41", "#e1c64d"][player.seedStacks - 1] ?? "#e1c64d"
-  if (power === "speed") return ["#5f8dff", "#3f7dff", "#6bc9ff"][player.speedStacks - 1] ?? "#6bc9ff"
-  if (power === "shield") return ["#b18d56", "#d5b06c", "#f0d58f"][player.shieldStacks - 1] ?? "#f0d58f"
+  if (power !== "none") return WEAPON_META[power].color
   return "#d38a3f"
 }
 
@@ -286,110 +322,47 @@ function clearOffensiveFusions(player: PlayerState) {
 
 function fusionHint(player: PlayerState) {
   const power = dominantPower(player)
-  if (power === "none") return "Pick a starter food to lock a weapon branch. Walnut always stays as defense."
-  if (power === "fire") {
-    if (player.fireStacks < PLAYER_MAX_STACK) return "Keep taking Pepper to push Fire weapon damage and spread."
-    return "Fire is capped. Ice Melon opens Obsidian and side foods trigger mini powers."
-  }
-  if (power === "ice") {
-    if (player.iceStacks < PLAYER_MAX_STACK) return "Keep taking Ice Melon to deepen slow and freeze pressure."
-    return "Ice is capped. Pepper opens Obsidian and other foods trigger mini powers."
-  }
-  if (power === "obsidian") return "Pepper or Ice Melon both feed Obsidian now. Side foods fire mini effects."
-  if (power === "seeds") return "Apple boosts spread and crowd control. Side foods wake mini powers when capped."
-  if (power === "speed") return "Blueberry sharpens cadence and reach. Side foods wake mini powers when capped."
-  return "Walnut is passive armor. It never breaks your main branch."
-}
-
-function miniPowerText(foodPower: PowerId) {
-  if (foodPower === "fire") return "Burn pulse"
-  if (foodPower === "ice") return "Slow burst"
-  if (foodPower === "seeds") return "Seed nova"
-  if (foodPower === "speed") return "Dash surge"
-  return "Guard"
+  if (power === "none") return "Pick Pepper, Ice Melon, Apple or Blueberry to lock a weapon. Walnut only adds shield."
+  const tier = stackForPower(player, power)
+  const meta = WEAPON_META[power]
+  if (tier < PLAYER_MAX_STACK) return `${meta.weapon} locked. Next ${meta.food} upgrades to ${meta.tiers[tier].name}.`
+  return `${meta.weapon} maxed. ${meta.food} now triggers overdrive. Other foods only heal.`
 }
 
 function fusionCompass(player: PlayerState): { center: BranchHint; branches: [BranchHint, BranchHint, BranchHint] } {
   const active = dominantPower(player)
-  const activeStack = stackForPower(player, active)
-
   if (active === "none") {
     return {
-      center: { label: "Plain Paws", icon: "P", color: "#d7a46a", outcome: "Pick a path" },
+      center: { label: "Choose Weapon", icon: "?", color: "#d7a46a", outcome: "First offensive food locks your path" },
       branches: [
-        { label: "Pepper", icon: "F", color: BRANCH_META.fire.color, outcome: "Start Fire" },
-        { label: "Apple", icon: "S", color: BRANCH_META.seeds.color, outcome: "Start Seed" },
-        { label: "Blueberry", icon: "Z", color: BRANCH_META.speed.color, outcome: "Start Speed" },
+        { label: "Lock", icon: "1", color: "#d7a46a", outcome: "Pepper, Ice, Apple or Blueberry", unlocked: false },
+        { label: "Upgrade", icon: "2", color: "#d7a46a", outcome: "Only the same food upgrades weapon", unlocked: false },
+        { label: "Shield", icon: "3", color: "#eccd8d", outcome: "Walnut stays passive defense", unlocked: false },
       ],
     }
   }
-
-  if (active === "fire") {
-    return {
-      center: { label: powerLabel(player), icon: BRANCH_META.fire.icon, color: BRANCH_META.fire.color, outcome: `Tier ${activeStack}/3` },
-      branches: [
-        { label: "Pepper", icon: "F", color: BRANCH_META.fire.color, outcome: activeStack < 3 ? "Upgrade Fire" : "Inferno blast" },
-        { label: "Ice Melon", icon: "I", color: BRANCH_META.ice.color, outcome: activeStack < 3 ? "Unlock at max" : "Shift to Obsidian" },
-        { label: "Side food", icon: "+", color: "#f1d79a", outcome: activeStack < 3 ? "Hold branch" : "Mini powers" },
-      ],
-    }
-  }
-
-  if (active === "ice") {
-    return {
-      center: { label: powerLabel(player), icon: BRANCH_META.ice.icon, color: BRANCH_META.ice.color, outcome: `Tier ${activeStack}/3` },
-      branches: [
-        { label: "Ice Melon", icon: "I", color: BRANCH_META.ice.color, outcome: activeStack < 3 ? "Upgrade Ice" : "Deep slow" },
-        { label: "Pepper", icon: "F", color: BRANCH_META.fire.color, outcome: activeStack < 3 ? "Unlock at max" : "Shift to Obsidian" },
-        { label: "Side food", icon: "+", color: "#f1d79a", outcome: activeStack < 3 ? "Hold branch" : "Mini powers" },
-      ],
-    }
-  }
-
-  if (active === "obsidian") {
-    return {
-      center: { label: powerLabel(player), icon: BRANCH_META.obsidian.icon, color: BRANCH_META.obsidian.color, outcome: `Tier ${activeStack}/3` },
-      branches: [
-        { label: "Pepper", icon: "F", color: BRANCH_META.fire.color, outcome: "Feed Obsidian" },
-        { label: "Ice Melon", icon: "I", color: BRANCH_META.ice.color, outcome: "Feed Obsidian" },
-        { label: "Side food", icon: "+", color: "#f1d79a", outcome: "Mini powers" },
-      ],
-    }
-  }
-
-  if (active === "seeds") {
-    return {
-      center: { label: powerLabel(player), icon: BRANCH_META.seeds.icon, color: BRANCH_META.seeds.color, outcome: `Tier ${activeStack}/3` },
-      branches: [
-        { label: "Apple", icon: "S", color: BRANCH_META.seeds.color, outcome: activeStack < 3 ? "Upgrade Seed" : "Wider spread" },
-        { label: "Pepper", icon: "F", color: BRANCH_META.fire.color, outcome: activeStack < 3 ? "Wait for max" : miniPowerText("fire") },
-        { label: "Ice Melon", icon: "I", color: BRANCH_META.ice.color, outcome: activeStack < 3 ? "Wait for max" : miniPowerText("ice") },
-      ],
-    }
-  }
-
-  if (active === "speed") {
-    return {
-      center: { label: powerLabel(player), icon: BRANCH_META.speed.icon, color: BRANCH_META.speed.color, outcome: `Tier ${activeStack}/3` },
-      branches: [
-        { label: "Blueberry", icon: "Z", color: BRANCH_META.speed.color, outcome: activeStack < 3 ? "Upgrade Speed" : "Long reach" },
-        { label: "Pepper", icon: "F", color: BRANCH_META.fire.color, outcome: activeStack < 3 ? "Wait for max" : miniPowerText("fire") },
-        { label: "Apple", icon: "S", color: BRANCH_META.seeds.color, outcome: activeStack < 3 ? "Wait for max" : miniPowerText("seeds") },
-      ],
-    }
-  }
-
+  const tier = stackForPower(player, active)
+  const meta = WEAPON_META[active]
+  const branches = meta.tiers.map((step, index) => ({
+    label: step.name,
+    icon: String(index + 1),
+    color: meta.color,
+    outcome: step.desc,
+    active: index === tier - 1,
+    unlocked: index < tier,
+  })) as [BranchHint, BranchHint, BranchHint]
   return {
-    center: { label: powerLabel(player), icon: BRANCH_META.shield.icon, color: BRANCH_META.shield.color, outcome: `Tier ${activeStack}/3` },
-    branches: [
-      { label: "Walnut", icon: "G", color: BRANCH_META.shield.color, outcome: "More armor" },
-      { label: "Pepper", icon: "F", color: BRANCH_META.fire.color, outcome: "Start branch" },
-      { label: "Ice Melon", icon: "I", color: BRANCH_META.ice.color, outcome: "Start branch" },
-    ],
+    center: {
+      label: meta.weapon,
+      icon: meta.icon,
+      color: meta.color,
+      outcome: tier < PLAYER_MAX_STACK ? `Tier ${tier}/3 · next ${meta.food}` : `Tier ${tier}/3 · overdrive ready`,
+    },
+    branches,
   }
 }
 
-type PickupBonus = "none" | "slowBurst" | "burnPulse" | "speedBurst" | "seedNova"
+type PickupBonus = "none" | "pathLocked" | "overdrive"
 
 function loadUnlockedLevel() {
   if (typeof window === "undefined") return 1
@@ -673,6 +646,13 @@ function queueBanner(state: GameState, text: string, now: number) {
   state.bannerUntil = now + 2300
 }
 
+function pushProjectile(state: GameState, projectile: Omit<Projectile, "id">) {
+  state.projectiles.push({
+    id: nextId++,
+    ...projectile,
+  })
+}
+
 function playerShoot(state: GameState, player: PlayerState, now: number) {
   if (!player.alive || player.attackCooldown > 0) return
   const target = nearestEnemy(player, state.enemies)
@@ -680,142 +660,99 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
   const activeEvent = state.activeEvent
   const projectileMul = activeEvent?.projectileBonus ?? 1
   const power = dominantPower(player)
-  const referenceSpeed =
-    power === "fire"
-      ? 8.8
-      : power === "ice"
-        ? 8.4
-        : power === "obsidian"
-          ? 10.2
-          : power === "seeds"
-            ? 9.2
-            : power === "speed"
-              ? 10.5
-              : power === "shield"
-                ? 7.4
-                : 8
-  const dir = aimWithMiss(player, target, { x: target.vx, y: target.vy }, referenceSpeed, 0.02)
+  const tier = power === "none" ? 0 : stackForPower(player, power)
+  const referenceSpeed = power === "fire" ? 9.2 : power === "ice" ? 8.7 : power === "seeds" ? 8.8 : power === "speed" ? 11.6 : 8
+  const dir = aimWithMiss(player, target, { x: target.vx, y: target.vy }, referenceSpeed, power === "speed" ? 0.012 : 0.022)
   player.facing = dir
 
   if (power === "fire") {
-    const count = Math.max(1, player.fireStacks)
+    const count = tier === 1 ? 1 : tier === 2 ? 2 : 3
     for (let i = 0; i < count; i++) {
-      const spread = (i - (count - 1) / 2) * 0.18
+      const spread = (i - (count - 1) / 2) * 0.11
       const angle = Math.atan2(dir.y, dir.x) + spread
-      state.projectiles.push({
-        id: nextId++,
-        owner: "player",
-        ownerId: player.id,
-        x: player.x,
-        y: player.y,
-        vx: Math.cos(angle) * 8.8,
-        vy: Math.sin(angle) * 8.8,
-        life: 1500,
-        radius: 6 + player.fireStacks,
-        color: "#ff6b2f",
-        damage: (8 + player.fireStacks * 4) * projectileMul,
-        kind: "fire",
-      })
-    }
-    player.attackCooldown = 260
-  } else if (power === "ice") {
-    const count = Math.max(1, player.iceStacks)
-    for (let i = 0; i < count; i++) {
-      const spread = (i - (count - 1) / 2) * 0.12
-      const angle = Math.atan2(dir.y, dir.x) + spread
-      state.projectiles.push({
-        id: nextId++,
-        owner: "player",
-        ownerId: player.id,
-        x: player.x,
-        y: player.y,
-        vx: Math.cos(angle) * 8.4,
-        vy: Math.sin(angle) * 8.4,
-        life: 1500,
-        radius: 5 + player.iceStacks,
-        color: "#9aefff",
-        damage: (5 + player.iceStacks * 2) * projectileMul,
-        kind: "ice",
-      })
-    }
-    player.attackCooldown = 280
-  } else if (power === "obsidian") {
-    const obsidianLevel = Math.min(3, Math.max(player.fireStacks, player.iceStacks))
-    for (let i = 0; i < obsidianLevel; i++) {
-      const spread = (i - (obsidianLevel - 1) / 2) * 0.07
-      const angle = Math.atan2(dir.y, dir.x) + spread
-      state.projectiles.push({
-        id: nextId++,
-        owner: "player",
-        ownerId: player.id,
-        x: player.x,
-        y: player.y,
-        vx: Math.cos(angle) * 10.2,
-        vy: Math.sin(angle) * 10.2,
-        life: 1500,
-        radius: 5.5,
-        color: "#222230",
-        damage: (8 + obsidianLevel * 3) * projectileMul,
-        kind: "obsidian",
-      })
-    }
-    player.attackCooldown = 240
-  } else if (power === "seeds") {
-    const count = 3 + player.seedStacks * 2
-    for (let i = 0; i < count; i++) {
-      const spread = (i - (count - 1) / 2) * 0.08
-      const angle = Math.atan2(dir.y, dir.x) + spread
-      state.projectiles.push({
-        id: nextId++,
+      pushProjectile(state, {
         owner: "player",
         ownerId: player.id,
         x: player.x,
         y: player.y,
         vx: Math.cos(angle) * 9.2,
         vy: Math.sin(angle) * 9.2,
-        life: 1500,
-        radius: 3.6,
+        life: 1700,
+        radius: 4.8 + tier * 0.4,
+        color: "#ff6b2f",
+        damage: (8 + tier * 3.5) * projectileMul,
+        kind: "fire",
+        pierce: tier >= 2 ? 1 : 0,
+        splash: tier >= 3 ? 52 : 0,
+      })
+    }
+    player.attackCooldown = 360 - tier * 40
+  } else if (power === "ice") {
+    const count = tier
+    for (let i = 0; i < count; i++) {
+      const spread = (i - (count - 1) / 2) * 0.1
+      const angle = Math.atan2(dir.y, dir.x) + spread
+      pushProjectile(state, {
+        owner: "player",
+        ownerId: player.id,
+        x: player.x,
+        y: player.y,
+        vx: Math.cos(angle) * 8.7,
+        vy: Math.sin(angle) * 8.7,
+        life: 1700,
+        radius: 4.6 + tier * 0.35,
+        color: "#9aefff",
+        damage: (6 + tier * 2.8) * projectileMul,
+        kind: "ice",
+        slow: 900 + tier * 450,
+        pierce: tier >= 2 ? 1 : 0,
+        splash: tier >= 3 ? 36 : 0,
+      })
+    }
+    player.attackCooldown = 370 - tier * 35
+  } else if (power === "seeds") {
+    const count = tier === 1 ? 3 : tier === 2 ? 5 : 7
+    for (let i = 0; i < count; i++) {
+      const spread = (i - (count - 1) / 2) * 0.12
+      const angle = Math.atan2(dir.y, dir.x) + spread
+      pushProjectile(state, {
+        owner: "player",
+        ownerId: player.id,
+        x: player.x,
+        y: player.y,
+        vx: Math.cos(angle) * 8.8,
+        vy: Math.sin(angle) * 8.8,
+        life: 1450,
+        radius: 3.6 + tier * 0.1,
         color: "#e8c96f",
-        damage: (4 + player.seedStacks * 2) * projectileMul,
+        damage: (3.8 + tier * 1.8) * projectileMul,
         kind: "seed",
       })
     }
-    player.attackCooldown = 330
+    player.attackCooldown = 350 - tier * 30
   } else if (power === "speed") {
-    state.projectiles.push({
-      id: nextId++,
-      owner: "player",
-      ownerId: player.id,
-      x: player.x,
-      y: player.y,
-      vx: dir.x * 10.5,
-      vy: dir.y * 10.5,
-      life: 1500,
-      radius: 4.2,
-      color: "#6bc9ff",
-      damage: (5 + player.speedStacks * 2) * projectileMul,
-      kind: "spark",
-    })
-    player.attackCooldown = 180
-  } else if (power === "shield") {
-    state.projectiles.push({
-      id: nextId++,
-      owner: "player",
-      ownerId: player.id,
-      x: player.x,
-      y: player.y,
-      vx: dir.x * 7.4,
-      vy: dir.y * 7.4,
-      life: 1500,
-      radius: 6.5,
-      color: "#f0d58f",
-      damage: (6 + player.shieldStacks * 2) * projectileMul,
-      kind: "seed",
-    })
-    player.attackCooldown = 320
+    const count = tier
+    for (let i = 0; i < count; i++) {
+      const spread = (i - (count - 1) / 2) * 0.035
+      const angle = Math.atan2(dir.y, dir.x) + spread
+      pushProjectile(state, {
+        owner: "player",
+        ownerId: player.id,
+        x: player.x,
+        y: player.y,
+        vx: Math.cos(angle) * (11.4 + tier * 0.45),
+        vy: Math.sin(angle) * (11.4 + tier * 0.45),
+        life: 1650,
+        radius: 3.2 + tier * 0.15,
+        color: "#6bc9ff",
+        damage: (4 + tier * 2) * projectileMul,
+        kind: "spark",
+        pierce: tier >= 3 ? 1 : 0,
+      })
+    }
+    player.attackCooldown = 200 - tier * 24
   } else {
-    state.projectiles.push({
-      id: nextId++,
+    pushProjectile(state, {
       owner: "player",
       ownerId: player.id,
       x: player.x,
@@ -830,27 +767,89 @@ function playerShoot(state: GameState, player: PlayerState, now: number) {
     })
     player.attackCooldown = 360
   }
+}
 
-  if (power === "fire" && player.fireStacks >= 3 && player.specialCooldown <= 0) {
-    player.specialCooldown = 3200
-    addParticles(state, player.x, player.y, "#ff6b2f", 18, 4)
-    for (let i = 0; i < 10; i++) {
-      const angle = (Math.PI * 2 * i) / 10
-      state.projectiles.push({
-        id: nextId++,
+function triggerWeaponOverdrive(state: GameState, player: PlayerState, now: number) {
+  const power = dominantPower(player)
+  const tier = power === "none" ? 0 : stackForPower(player, power)
+  if (power === "none" || tier < PLAYER_MAX_STACK) return
+
+  if (power === "fire") {
+    addParticles(state, player.x, player.y, WEAPON_META.fire.color, 18, 4)
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 * i) / 8
+      pushProjectile(state, {
         owner: "player",
         ownerId: player.id,
         x: player.x,
         y: player.y,
-        vx: Math.cos(angle) * 6,
-        vy: Math.sin(angle) * 6,
-        life: 900,
-        radius: 5,
-        color: "#ff9152",
-        damage: 5 * projectileMul,
+        vx: Math.cos(angle) * 7.2,
+        vy: Math.sin(angle) * 7.2,
+        life: 850,
+        radius: 4.5,
+        color: WEAPON_META.fire.color,
+        damage: 5.5,
         kind: "fire",
+        splash: 42,
       })
     }
+    queueBanner(state, "Sunshot overdrive", now)
+    return
+  }
+
+  if (power === "ice") {
+    addParticles(state, player.x, player.y, WEAPON_META.ice.color, 18, 4)
+    for (const enemy of state.enemies) {
+      if (Math.hypot(enemy.x - player.x, enemy.y - player.y) < 220) enemy.slowTimer = Math.max(enemy.slowTimer, 2200)
+    }
+    queueBanner(state, "Glacier overdrive", now)
+    return
+  }
+
+  if (power === "seeds") {
+    for (let i = 0; i < 10; i++) {
+      const angle = (Math.PI * 2 * i) / 10
+      pushProjectile(state, {
+        owner: "player",
+        ownerId: player.id,
+        x: player.x,
+        y: player.y,
+        vx: Math.cos(angle) * 8.1,
+        vy: Math.sin(angle) * 8.1,
+        life: 900,
+        radius: 4,
+        color: WEAPON_META.seeds.color,
+        damage: 4.5,
+        kind: "seed",
+      })
+    }
+    queueBanner(state, "Hedge overdrive", now)
+    return
+  }
+
+  if (power === "speed") {
+    const target = nearestEnemy(player, state.enemies)
+    if (!target) return
+    const dir = aimWithMiss(player, target, { x: target.vx, y: target.vy }, 13.4, 0.008)
+    for (let i = 0; i < 3; i++) {
+      const spread = (i - 1) * 0.04
+      const angle = Math.atan2(dir.y, dir.x) + spread
+      pushProjectile(state, {
+        owner: "player",
+        ownerId: player.id,
+        x: player.x,
+        y: player.y,
+        vx: Math.cos(angle) * 13.4,
+        vy: Math.sin(angle) * 13.4,
+        life: 1000,
+        radius: 3.3,
+        color: WEAPON_META.speed.color,
+        damage: 6,
+        kind: "spark",
+        pierce: 1,
+      })
+    }
+    queueBanner(state, "Rail overdrive", now)
   }
 }
 
@@ -865,67 +864,18 @@ function playerEatFood(player: PlayerState, food: FoodType): PickupBonus {
   const active = dominantPower(player)
   if (active === "none") {
     clearOffensiveFusions(player)
-    if (food.power === "fire") player.fireStacks = 1
-    else if (food.power === "ice") player.iceStacks = 1
-    else if (food.power === "seeds") player.seedStacks = 1
-    else if (food.power === "speed") player.speedStacks = 1
-    return "none"
-  }
-
-  if (active === "fire") {
-    if (food.power === "fire") player.fireStacks = clamp(player.fireStacks + 1, 0, PLAYER_MAX_STACK)
-    else if (food.power === "ice" && player.fireStacks >= PLAYER_MAX_STACK) player.iceStacks = 1
-    else if (player.fireStacks >= PLAYER_MAX_STACK) {
-      if (food.power === "ice") return "slowBurst"
-      if (food.power === "speed") return "speedBurst"
-      if (food.power === "seeds") return "seedNova"
+    if (food.power === "fire" || food.power === "ice" || food.power === "seeds" || food.power === "speed") {
+      setWeaponStack(player, food.power, 1)
     }
     return "none"
   }
 
-  if (active === "ice") {
-    if (food.power === "ice") player.iceStacks = clamp(player.iceStacks + 1, 0, PLAYER_MAX_STACK)
-    else if (food.power === "fire" && player.iceStacks >= PLAYER_MAX_STACK) player.fireStacks = 1
-    else if (player.iceStacks >= PLAYER_MAX_STACK) {
-      if (food.power === "fire") return "burnPulse"
-      if (food.power === "speed") return "speedBurst"
-      if (food.power === "seeds") return "seedNova"
-    }
-    return "none"
-  }
+  if (food.power !== active) return "pathLocked"
 
-  if (active === "obsidian") {
-    if (food.power === "fire" || food.power === "ice") {
-      const next = clamp(Math.max(player.fireStacks, player.iceStacks) + 1, 1, PLAYER_MAX_STACK)
-      player.fireStacks = next
-      player.iceStacks = next
-    } else if (food.power === "speed") {
-      return "speedBurst"
-    } else if (food.power === "seeds") {
-      return "seedNova"
-    }
-    return "none"
-  }
+  const nextTier = stackForPower(player, active) + 1
+  if (nextTier > PLAYER_MAX_STACK) return "overdrive"
 
-  if (active === "seeds") {
-    if (food.power === "seeds") player.seedStacks = clamp(player.seedStacks + 1, 0, PLAYER_MAX_STACK)
-    else if (player.seedStacks >= PLAYER_MAX_STACK) {
-      if (food.power === "fire") return "burnPulse"
-      if (food.power === "ice") return "slowBurst"
-      if (food.power === "speed") return "speedBurst"
-    }
-    return "none"
-  }
-
-  if (active === "speed") {
-    if (food.power === "speed") player.speedStacks = clamp(player.speedStacks + 1, 0, PLAYER_MAX_STACK)
-    else if (player.speedStacks >= PLAYER_MAX_STACK) {
-      if (food.power === "fire") return "burnPulse"
-      if (food.power === "ice") return "slowBurst"
-      if (food.power === "seeds") return "seedNova"
-    }
-  }
-
+  setWeaponStack(player, active, nextTier)
   return "none"
 }
 
@@ -1217,6 +1167,7 @@ export default function SquirrelGame() {
     wavePercent: 0,
     fusion: "Plain Paws",
     players: 1,
+    shields: 0,
     mode: "single" as PlayMode,
     bossHp: 0,
     bossMaxHp: 0,
@@ -1323,6 +1274,7 @@ export default function SquirrelGame() {
         wavePercent,
         fusion: localPlayer ? powerLabel(localPlayer) : "Plain Paws",
         players: state.players.filter((player) => player.alive).length,
+        shields: localPlayer?.shieldStacks ?? 0,
         mode: state.mode,
         bossHp: boss ? Math.round(boss.hp) : 0,
         bossMaxHp: boss ? Math.round(boss.maxHp) : 0,
@@ -1768,39 +1720,10 @@ export default function SquirrelGame() {
             state.sharedScore += 12
             addParticles(state, food.x, food.y, food.type.color, 10, 3)
             state.foods.splice(i, 1)
-            if (bonus === "slowBurst") {
-              for (const enemy of state.enemies) enemy.slowTimer = Math.max(enemy.slowTimer, 1200)
-              queueBanner(state, "Frost pulse", now)
-            } else if (bonus === "burnPulse") {
-              for (const enemy of state.enemies) {
-                if (Math.hypot(enemy.x - player.x, enemy.y - player.y) < 180) enemy.hp -= 6
-              }
-              addParticles(state, player.x, player.y, "#ff7d4a", 18, 4)
-              queueBanner(state, "Burn screen", now)
-            } else if (bonus === "speedBurst") {
-              player.vx *= 1.45
-              player.vy *= 1.45
-              player.speedStacks = clamp(player.speedStacks, 1, PLAYER_MAX_STACK)
-              queueBanner(state, "Dash surge", now)
-            } else if (bonus === "seedNova") {
-              for (let burst = 0; burst < 8; burst++) {
-                const angle = (Math.PI * 2 * burst) / 8
-                state.projectiles.push({
-                  id: nextId++,
-                  owner: "player",
-                  ownerId: player.id,
-                  x: player.x,
-                  y: player.y,
-                  vx: Math.cos(angle) * 8.2,
-                  vy: Math.sin(angle) * 8.2,
-                  life: 900,
-                  radius: 4,
-                  color: "#e8c96f",
-                  damage: 4,
-                  kind: "seed",
-                })
-              }
-              queueBanner(state, "Seed nova", now)
+            if (bonus === "pathLocked") {
+              queueBanner(state, "Path locked", now)
+            } else if (bonus === "overdrive") {
+              triggerWeaponOverdrive(state, player, now)
             }
           }
         }
@@ -1935,10 +1858,23 @@ export default function SquirrelGame() {
             if (Math.hypot(projectile.x - enemy.x, projectile.y - enemy.y) < projectile.radius + enemy.size) {
               enemy.hp -= projectile.damage
               enemy.hitFlash = 1
-              if (projectile.kind === "ice") enemy.slowTimer = Math.max(enemy.slowTimer, 1400)
-              if (projectile.kind === "obsidian") enemy.slowTimer = Math.max(enemy.slowTimer, 800)
+              if (projectile.slow) enemy.slowTimer = Math.max(enemy.slowTimer, projectile.slow)
+              if (projectile.splash) {
+                for (const splashTarget of state.enemies) {
+                  if (splashTarget.id === enemy.id) continue
+                  if (Math.hypot(splashTarget.x - enemy.x, splashTarget.y - enemy.y) < projectile.splash) {
+                    splashTarget.hp -= projectile.damage * 0.35
+                    if (projectile.slow) splashTarget.slowTimer = Math.max(splashTarget.slowTimer, Math.round(projectile.slow * 0.6))
+                  }
+                }
+              }
               addParticles(state, projectile.x, projectile.y, projectile.color, 8, 3)
-              projectile.life = projectile.kind === "obsidian" ? Math.min(projectile.life, 460) : -1
+              if ((projectile.pierce ?? 0) > 0) {
+                projectile.pierce = (projectile.pierce ?? 0) - 1
+                projectile.life = Math.min(projectile.life, 320)
+              } else {
+                projectile.life = -1
+              }
               break
             }
           }
@@ -2295,102 +2231,97 @@ export default function SquirrelGame() {
           <>
             <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-4 text-white">
               <div className="flex flex-col items-center gap-1">
-              <div className="rounded-full bg-black/45 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm">
-                {hud.mode === "endless" ? `Endless - ${hud.levelName}` : `Level ${hud.level} - ${hud.levelName}`}
-              </div>
-              <div className="rounded-full bg-black/45 px-4 py-1 text-xs text-white/85 backdrop-blur-sm">
-                {hud.waveLabel} - {hud.wavePercent}%
-              </div>
-              <div className="h-2.5 w-40 overflow-hidden rounded-full bg-black/35">
-                <div
-                  className="h-full rounded-full bg-[#9dde6d] transition-[width] duration-200"
-                  style={{ width: `${hud.wavePercent}%` }}
-                />
-              </div>
-              {hud.pauseLabel && <div className="rounded-full bg-[#ffd966]/15 px-4 py-1 text-xs text-[#ffd966]">{hud.pauseLabel}</div>}
-              {hud.eventName && (
-                <div
-                  className="rounded-full px-4 py-1 text-xs font-bold backdrop-blur-sm"
-                  style={{ background: "rgba(0,0,0,0.55)", color: hud.eventColor }}
-                >
-                  {hud.eventName}
+                <div className="rounded-full bg-black/45 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm">
+                  {hud.mode === "endless" ? `Endless - ${hud.levelName}` : `Level ${hud.level} - ${hud.levelName}`}
                 </div>
-              )}
+                <div className="rounded-full bg-black/45 px-4 py-1 text-xs text-white/85 backdrop-blur-sm">
+                  {hud.waveLabel} - {hud.wavePercent}%
+                </div>
+                <div className="h-2.5 w-40 overflow-hidden rounded-full bg-black/35">
+                  <div
+                    className="h-full rounded-full bg-[#9dde6d] transition-[width] duration-200"
+                    style={{ width: `${hud.wavePercent}%` }}
+                  />
+                </div>
+                {hud.bossMaxHp > 0 && (
+                  <>
+                    <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#ffb0b0]">Boss</div>
+                    <div className="h-2.5 w-40 overflow-hidden rounded-full bg-black/35">
+                      <div
+                        className="h-full rounded-full bg-[#ff5f5f]"
+                        style={{ width: `${(hud.bossHp / hud.bossMaxHp) * 100}%` }}
+                      />
+                    </div>
+                  </>
+                )}
+                {hud.pauseLabel && <div className="rounded-full bg-[#ffd966]/15 px-4 py-1 text-xs text-[#ffd966]">{hud.pauseLabel}</div>}
+                {hud.eventName && (
+                  <div
+                    className="rounded-full px-4 py-1 text-xs font-bold backdrop-blur-sm"
+                    style={{ background: "rgba(0,0,0,0.55)", color: hud.eventColor }}
+                  >
+                    {hud.eventName}
+                  </div>
+                )}
+              </div>
             </div>
+            <div className="pointer-events-none absolute right-4 top-4 text-right text-white [text-shadow:0_2px_10px_rgba(0,0,0,0.7)]">
+              <div className="text-sm font-black">HP {hud.hp}</div>
+              <div className="text-sm font-black">Score {hud.score}</div>
+              <div className="text-xs font-semibold">Players alive: {hud.players}</div>
+              {hud.roomCode && <div className="text-[11px] text-white/70">Room {hud.roomCode}</div>}
             </div>
             <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4 text-white">
-              <div className="mx-auto grid max-w-[920px] gap-3 md:grid-cols-[1.05fr_1.2fr_0.85fr]">
-                <div className="rounded-[24px] border border-white/10 bg-black/50 px-4 py-3 backdrop-blur-md">
-                  <div className="mb-1 flex items-center gap-2 text-sm font-bold">
-                    <span>HP</span>
-                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-white/20">
-                      <div className="h-full rounded-full bg-[#68dd68]" style={{ width: `${hud.hp}%` }} />
+              <div className="mx-auto max-w-[760px] rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(18,12,10,0.92),rgba(10,9,10,0.88))] px-4 py-3 backdrop-blur-md">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/55">Locked Weapon</div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <div
+                        className="flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-black"
+                        style={{ background: `${hud.compass.center.color}26`, color: hud.compass.center.color }}
+                      >
+                        {hud.compass.center.icon}
+                      </div>
+                      <div>
+                        <div className="text-sm font-black text-white">{hud.compass.center.label}</div>
+                        <div className="text-[11px] text-white/65">{hud.compass.center.outcome}</div>
+                      </div>
                     </div>
-                    <span className="font-mono text-xs">{hud.hp}</span>
                   </div>
-                  <div className="flex items-center justify-between text-xs font-mono text-white/85">
-                    <span>Score {hud.score}</span>
-                    <span>{hud.fusion}</span>
+                  <div className="text-right">
+                    <div className="rounded-full bg-white/8 px-2 py-1 text-[10px] uppercase tracking-wide text-[#eccd8d]">
+                      Walnut shields x{hud.shields}
+                    </div>
+                    <div className="mt-2 text-[11px] text-white/60">{hud.environment}</div>
                   </div>
-                  <div className="mt-1 text-[11px] text-white/60">{hud.environment}</div>
-                  <div className="mt-1 line-clamp-2 text-[11px] text-white/70">{hud.nextHint}</div>
                 </div>
-
-                <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(18,12,10,0.86),rgba(8,8,10,0.82))] px-4 py-3 backdrop-blur-md">
-                  <div className="mb-2 flex items-center justify-between">
-                    <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/55">Weapon Route</div>
-                    <div className="rounded-full bg-white/8 px-2 py-1 text-[10px] uppercase tracking-wide text-[#eccd8d]">Guard passive</div>
-                  </div>
-                    <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2">
-                      {hud.compass.branches.map((branch, index) => (
-                        <div key={`${branch.label}-${index}`} className="contents">
-                          {index > 0 && <div className="text-center text-xs text-white/35">{index === 1 ? "^" : "->"}</div>}
-                          <div className="flex min-w-0 flex-col items-center text-center">
-                            <div
-                              className="flex h-9 w-9 items-center justify-center rounded-2xl border text-sm font-black"
-                              style={{ borderColor: `${branch.color}aa`, background: `${branch.color}22`, color: branch.color }}
-                            >
-                              {branch.icon}
-                            </div>
-                            <div className="mt-1 text-[11px] font-bold text-white">{branch.label}</div>
-                            <div className="text-[10px] leading-tight text-white/55">{branch.outcome}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  <div className="mt-2 flex items-center justify-center gap-2 rounded-2xl bg-white/6 px-3 py-2">
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  {hud.compass.branches.map((branch, index) => (
                     <div
-                      className="flex h-9 w-9 items-center justify-center rounded-2xl text-sm font-black"
-                      style={{ background: `${hud.compass.center.color}26`, color: hud.compass.center.color }}
+                      key={`${branch.label}-${index}`}
+                      className={`rounded-2xl border px-3 py-3 transition ${
+                        branch.active
+                          ? "border-white/35 bg-white/12"
+                          : branch.unlocked
+                            ? "border-white/20 bg-white/8"
+                            : "border-white/10 bg-black/20"
+                      }`}
                     >
-                      {hud.compass.center.icon}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-bold text-white">{hud.compass.center.label}</div>
-                      <div className="text-[10px] text-white/55">{hud.compass.center.outcome}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-[24px] border border-white/10 bg-black/50 px-4 py-3 text-right text-xs text-white backdrop-blur-md">
-                  <div>Players alive: {hud.players}</div>
-                  {hud.roomCode && <div>Room {hud.roomCode}</div>}
-                  <div className="mt-1 text-white/60">{hud.mode === "endless" ? "Heavy endless pressure" : "Campaign run"}</div>
-                  {hud.bossMaxHp > 0 && (
-                    <>
-                      <div className="mt-2 font-bold text-[#ff8a8a]">Boss HP</div>
-                      <div className="mt-1 h-2.5 w-full overflow-hidden rounded-full bg-white/15">
+                      <div className="flex items-center gap-2">
                         <div
-                          className="h-full rounded-full bg-[#ff5f5f]"
-                          style={{ width: `${(hud.bossHp / hud.bossMaxHp) * 100}%` }}
-                        />
+                          className="flex h-7 w-7 items-center justify-center rounded-xl text-[11px] font-black"
+                          style={{ background: `${branch.color}26`, color: branch.color }}
+                        >
+                          {branch.icon}
+                        </div>
+                        <div className="text-xs font-bold text-white">{branch.label}</div>
                       </div>
-                      <div className="mt-1 font-mono">
-                        {hud.bossHp}/{hud.bossMaxHp}
-                      </div>
-                    </>
-                  )}
+                      <div className="mt-2 text-[11px] leading-snug text-white/62">{branch.outcome}</div>
+                    </div>
+                  ))}
                 </div>
+                <div className="mt-3 text-center text-[11px] text-white/68">{hud.nextHint}</div>
               </div>
             </div>
           </>
@@ -2402,7 +2333,7 @@ export default function SquirrelGame() {
               <div>
                 <h1 className="text-4xl font-black tracking-tight md:text-5xl">Squirrel Fusion</h1>
                 <p className="mt-2 max-w-xl text-sm text-white/75 md:text-base">
-                  Campanie cu drum vertical, fusion routes mai clare, pradatori noi si un Endless greu care urca prin toate
+                  Campanie cu drum vertical, weapon routes mai clare, pradatori noi si un Endless greu care urca prin toate
                   biome-urile.
                 </p>
               </div>
@@ -2512,7 +2443,7 @@ export default function SquirrelGame() {
               <div className="rounded-[24px] border border-white/10 bg-black/25 p-5 text-sm text-white/75 shadow-[0_18px_60px_rgba(0,0,0,0.24)] backdrop-blur-sm">
                 <div className="mb-3 text-sm font-bold uppercase tracking-wide text-[#9dde6d]">Fresh Systems</div>
                 <ul className="space-y-2">
-                  <li>Fusion route panel in-match, cu nodul curent in centru si 3 directii de upgrade.</li>
+                  <li>Weapon route panel in-match, cu tier-uri clare si un singur drum lock-uit pe run.</li>
                   <li>Campania urca pe un drum vertical inversat corect: sus e progres nou, jos e replay.</li>
                   <li>Endless muta automat run-ul prin biome-uri si tine highscore cu score si wave.</li>
                   <li>Fire, Ice, Seed si Speed au identitate mai clara, iar Guard ramane pasiv si sigur.</li>
@@ -2649,11 +2580,11 @@ export default function SquirrelGame() {
                   <div>{LEVELS[selectedLevel - 1].waves} waves in this level.</div>
                   <div>Environment predators: {LEVELS[selectedLevel - 1].enemyPool.join(", ")}.</div>
                   <div>Special trigger: micro/mini/boss appears based on level milestone.</div>
-                  <div>Tip: commit to one fusion path, then use off-path items for mini powers.</div>
+                  <div>Tip: prima arma se blocheaza rapid, iar doar acelasi ingredient o mai upgradeaza.</div>
                 </div>
               </div>
               <div className="rounded-[24px] border border-white/10 bg-white/5 p-5">
-                <div className="mb-3 text-sm font-bold uppercase tracking-wide text-[#7fd6ff]">Fusion Intel</div>
+                <div className="mb-3 text-sm font-bold uppercase tracking-wide text-[#7fd6ff]">Weapon Intel</div>
                 <div className="grid gap-2">
                   {EVOLUTION_PATHS.map((path) => (
                     <div key={path.id} className="rounded-2xl bg-black/20 px-3 py-2 text-xs text-white/80">
@@ -2782,7 +2713,7 @@ export default function SquirrelGame() {
             <p className="max-w-md text-sm text-white/75">
               {status === "won"
                 ? "Ai terminat toate cele 10 niveluri, mini-boss-ul de la 5 si boss-ul final care spawneaza adds."
-                : "Wave-urile te-au prins. Incearca alta combinatie de fusion si tine linia pana la boss."}
+                : "Wave-urile te-au prins. Incearca alta arma si tine linia pana la boss."}
             </p>
             <div className="rounded-2xl bg-white/10 px-5 py-3 font-mono">Score {hud.score}</div>
             <div className="flex gap-3">
@@ -2806,7 +2737,7 @@ export default function SquirrelGame() {
 
       <div className="grid w-full max-w-[960px] gap-3 md:grid-cols-[1.2fr_1fr]">
         <div className="rounded-[24px] border border-border bg-card p-4">
-          <div className="mb-3 text-sm font-bold uppercase tracking-wide text-card-foreground">Fusion Food</div>
+          <div className="mb-3 text-sm font-bold uppercase tracking-wide text-card-foreground">Weapon Food</div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
             {FOODS.map((food) => (
               <div key={food.id} className="rounded-2xl border border-border bg-background/60 p-3">
@@ -2825,7 +2756,7 @@ export default function SquirrelGame() {
           <div className="space-y-2 text-sm text-muted-foreground">
             <div>`WASD` or arrow keys to move.</div>
             <div>Click to move and drag to re-route.</div>
-            <div>Attacks fire automatically based on your strongest fusion.</div>
+            <div>Prima arma ofensiva pe care o iei iti blocheaza drumul pentru tot run-ul.</div>
             <div>In co-op, the room works across browser tabs with the same code.</div>
           </div>
         </div>
