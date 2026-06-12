@@ -2293,67 +2293,9 @@ export default function SquirrelGame() {
         />
 
         {status === "playing" && (
-          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4 text-white">
-            <div className="grid gap-3">
-              <div className="rounded-[24px] border border-white/10 bg-black/50 px-4 py-3 backdrop-blur-sm">
-                <div className="mb-1 flex items-center gap-2 text-sm font-bold">
-                  <span>HP</span>
-                  <div className="h-2.5 w-28 overflow-hidden rounded-full bg-white/20">
-                    <div className="h-full rounded-full bg-[#68dd68]" style={{ width: `${hud.hp}%` }} />
-                  </div>
-                  <span className="font-mono text-xs">{hud.hp}</span>
-                </div>
-                <div className="text-xs font-mono">Score {hud.score}</div>
-                <div className="text-xs font-mono text-white/85">{hud.fusion}</div>
-                <div className="text-xs font-mono text-white/60">{hud.environment}</div>
-                <div className="mt-1 max-w-[220px] text-[11px] text-white/70">{hud.nextHint}</div>
-              </div>
-
-              <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(18,12,10,0.86),rgba(8,8,10,0.82))] px-4 py-3 backdrop-blur-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/55">Weapon Route</div>
-                  <div className="rounded-full bg-white/8 px-2 py-1 text-[10px] uppercase tracking-wide text-[#eccd8d]">
-                    Guard passive
-                  </div>
-                </div>
-                <div className="relative flex h-[170px] w-[240px] items-center justify-center">
-                  {hud.compass.branches.map((branch, index) => {
-                    const positions = [
-                      "left-[6px] top-1/2 -translate-y-1/2",
-                      "left-1/2 top-[4px] -translate-x-1/2",
-                      "right-[6px] top-1/2 -translate-y-1/2",
-                    ]
-                    const arrows = ["<-", "^", "->"]
-                    return (
-                      <div key={`${branch.label}-${index}`} className={`absolute ${positions[index]} flex w-[84px] flex-col items-center text-center`}>
-                        <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-white/45">{arrows[index]}</div>
-                        <div
-                          className="flex h-10 w-10 items-center justify-center rounded-2xl border text-sm font-black shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
-                          style={{ borderColor: `${branch.color}aa`, background: `${branch.color}22`, color: branch.color }}
-                        >
-                          {branch.icon}
-                        </div>
-                        <div className="mt-2 text-[11px] font-bold text-white">{branch.label}</div>
-                        <div className="mt-1 text-[10px] leading-tight text-white/58">{branch.outcome}</div>
-                      </div>
-                    )
-                  })}
-
-                  <div className="flex h-20 w-20 flex-col items-center justify-center rounded-[26px] border border-white/12 bg-black/45 text-center shadow-[0_18px_40px_rgba(0,0,0,0.3)]">
-                    <div
-                      className="flex h-11 w-11 items-center justify-center rounded-2xl text-lg font-black"
-                      style={{ background: `${hud.compass.center.color}26`, color: hud.compass.center.color }}
-                    >
-                      {hud.compass.center.icon}
-                    </div>
-                    <div className="mt-1 text-[11px] font-bold text-white">{hud.compass.center.label}</div>
-                    <div className="text-[10px] text-white/55">{hud.compass.center.outcome}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col items-center gap-1">
+          <>
+            <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-4 text-white">
+              <div className="flex flex-col items-center gap-1">
               <div className="rounded-full bg-black/45 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm">
                 {hud.mode === "endless" ? `Endless - ${hud.levelName}` : `Level ${hud.level} - ${hud.levelName}`}
               </div>
@@ -2376,27 +2318,83 @@ export default function SquirrelGame() {
                 </div>
               )}
             </div>
-
-            <div className="rounded-[24px] border border-white/10 bg-black/50 px-4 py-3 text-right text-xs text-white backdrop-blur-sm">
-              <div>Players alive: {hud.players}</div>
-              {hud.roomCode && <div>Room {hud.roomCode}</div>}
-              <div className="mt-1 text-white/60">{hud.mode === "endless" ? "Heavy endless pressure" : "Campaign run"}</div>
-              {hud.bossMaxHp > 0 && (
-                <>
-                  <div className="mt-2 font-bold text-[#ff8a8a]">Boss HP</div>
-                  <div className="mt-1 h-2.5 w-36 overflow-hidden rounded-full bg-white/15">
-                    <div
-                      className="h-full rounded-full bg-[#ff5f5f]"
-                      style={{ width: `${(hud.bossHp / hud.bossMaxHp) * 100}%` }}
-                    />
-                  </div>
-                  <div className="mt-1 font-mono">
-                    {hud.bossHp}/{hud.bossMaxHp}
-                  </div>
-                </>
-              )}
             </div>
-          </div>
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4 text-white">
+              <div className="mx-auto grid max-w-[920px] gap-3 md:grid-cols-[1.05fr_1.2fr_0.85fr]">
+                <div className="rounded-[24px] border border-white/10 bg-black/50 px-4 py-3 backdrop-blur-md">
+                  <div className="mb-1 flex items-center gap-2 text-sm font-bold">
+                    <span>HP</span>
+                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-white/20">
+                      <div className="h-full rounded-full bg-[#68dd68]" style={{ width: `${hud.hp}%` }} />
+                    </div>
+                    <span className="font-mono text-xs">{hud.hp}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs font-mono text-white/85">
+                    <span>Score {hud.score}</span>
+                    <span>{hud.fusion}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-white/60">{hud.environment}</div>
+                  <div className="mt-1 line-clamp-2 text-[11px] text-white/70">{hud.nextHint}</div>
+                </div>
+
+                <div className="rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(18,12,10,0.86),rgba(8,8,10,0.82))] px-4 py-3 backdrop-blur-md">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/55">Weapon Route</div>
+                    <div className="rounded-full bg-white/8 px-2 py-1 text-[10px] uppercase tracking-wide text-[#eccd8d]">Guard passive</div>
+                  </div>
+                  <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2">
+                    {hud.compass.branches.map((branch, index) => (
+                      <React.Fragment key={`${branch.label}-${index}`}>
+                        {index > 0 && <div className="text-center text-xs text-white/35">{index === 1 ? "^" : "->"}</div>}
+                        <div className="flex min-w-0 flex-col items-center text-center">
+                          <div
+                            className="flex h-9 w-9 items-center justify-center rounded-2xl border text-sm font-black"
+                            style={{ borderColor: `${branch.color}aa`, background: `${branch.color}22`, color: branch.color }}
+                          >
+                            {branch.icon}
+                          </div>
+                          <div className="mt-1 text-[11px] font-bold text-white">{branch.label}</div>
+                          <div className="text-[10px] leading-tight text-white/55">{branch.outcome}</div>
+                        </div>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center justify-center gap-2 rounded-2xl bg-white/6 px-3 py-2">
+                    <div
+                      className="flex h-9 w-9 items-center justify-center rounded-2xl text-sm font-black"
+                      style={{ background: `${hud.compass.center.color}26`, color: hud.compass.center.color }}
+                    >
+                      {hud.compass.center.icon}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold text-white">{hud.compass.center.label}</div>
+                      <div className="text-[10px] text-white/55">{hud.compass.center.outcome}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-white/10 bg-black/50 px-4 py-3 text-right text-xs text-white backdrop-blur-md">
+                  <div>Players alive: {hud.players}</div>
+                  {hud.roomCode && <div>Room {hud.roomCode}</div>}
+                  <div className="mt-1 text-white/60">{hud.mode === "endless" ? "Heavy endless pressure" : "Campaign run"}</div>
+                  {hud.bossMaxHp > 0 && (
+                    <>
+                      <div className="mt-2 font-bold text-[#ff8a8a]">Boss HP</div>
+                      <div className="mt-1 h-2.5 w-full overflow-hidden rounded-full bg-white/15">
+                        <div
+                          className="h-full rounded-full bg-[#ff5f5f]"
+                          style={{ width: `${(hud.bossHp / hud.bossMaxHp) * 100}%` }}
+                        />
+                      </div>
+                      <div className="mt-1 font-mono">
+                        {hud.bossHp}/{hud.bossMaxHp}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
         {status === "menu" && (
